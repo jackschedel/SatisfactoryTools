@@ -724,12 +724,17 @@
 					<span class="fas fa-pallet mr-1"></span> Items
 				</a>
 			</li>
-			<li class="nav-item">
-				<a class="nav-link" ng-class="{active: ctrl.tab.resultTab === 'buildings'}" ng-click="ctrl.tab.resultTab = 'buildings'">
-					<span class="fas fa-industry mr-1"></span> Buildings
-				</a>
-			</li>
-		</ul>
+<li class="nav-item">
+<a class="nav-link" ng-class="{active: ctrl.tab.resultTab === 'buildings'}" ng-click="ctrl.tab.resultTab = 'buildings'">
+<span class="fas fa-industry mr-1"></span> Buildings
+</a>
+</li>
+<li class="nav-item">
+<a class="nav-link" ng-class="{active: ctrl.tab.resultTab === 'customGraph'}" ng-click="ctrl.tab.resultTab = 'customGraph'">
+<span class="fas fa-project-diagram mr-1"></span> Custom Graph
+</a>
+</li>
+</ul>
 		<div ng-show="ctrl.tab.resultTab === 'overview'" class="visualization-result">
 			<div class="row">
 				<div class="col-md-4">
@@ -1145,16 +1150,22 @@
 			</table>
 		</div>
 
-		<div ng-show="ctrl.tab.resultTab === 'power'" class="visualization-result">
-			<table class="table table-hover">
-				<thead>
-					<tr>
-						<th class="table-cell-micro"></th>
-						<th>Machine</th>
-						<th class="table-cell-adjust-size">Power usage</th>
-						<th></th>
-					</tr>
-				</thead>
+<div ng-show="ctrl.tab.resultTab === 'customGraph'">
+<div class="visualization-resizable">
+<custom-graph result="ctrl.tab.resultNew" tab-id="ctrl.tab.data.metadata.tabId" ng-class="{visualization: 1, loading: ctrl.tab.state.resultLoading}"></custom-graph>
+</div>
+</div>
+
+<div ng-show="ctrl.tab.resultTab === 'power'" class="visualization-result">
+<table class="table table-hover">
+<thead>
+<tr>
+<th class="table-cell-micro"></th>
+<th>Machine</th>
+<th class="table-cell-adjust-size">Power usage</th>
+<th></th>
+</tr>
+</thead>
 				<tbody>
 					<tr ng-repeat="(machine, data) in ctrl.tab.resultNew.details.power.byBuilding"  class="cursor-pointer" ng-click="ctrl.tab.state.powerExpanded[machine] = !ctrl.tab.state.powerExpanded[machine]">
 						<td>

@@ -53,9 +53,12 @@ export class ProductionTab
 
 	public constructor(private readonly scope: IProductionControllerScope, productionData?: IProductionData)
 	{
-		if (productionData) {
-			this.data = productionData;
-			if (!this.data.request.defaultClockSpeed) {
+if (productionData) {
+this.data = productionData;
+if (!this.data.metadata.tabId) {
+this.data.metadata.tabId = ProductionTab.generateTabId();
+}
+if (!this.data.request.defaultClockSpeed) {
 				this.data.request.defaultClockSpeed = 100;
 			}
 			if (!this.data.request.clockSpeeds) {
@@ -145,15 +148,16 @@ export class ProductionTab
 		}
 	}
 
-	public resetData(): void
-	{
-		this.data = {
-			metadata: {
-				name: null,
-				icon: null,
-				schemaVersion: 2,
-				gameVersion: '0',
-			},
+public resetData(): void
+{
+this.data = {
+metadata: {
+name: null,
+icon: null,
+schemaVersion: 2,
+gameVersion: '0',
+tabId: ProductionTab.generateTabId(),
+},
 			request: {
 				optimisation: 'resources',
 				defaultClockSpeed: 100,
@@ -568,7 +572,12 @@ export class ProductionTab
 		}
 	}
 
-	private getResourceWeight(item: string): number
+	private static generateTabId(): string
+{
+return 'tab_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+private getResourceWeight(item: string): number
 	{
 		switch (this.data.request.resourceWeightType) {
 			case 'equal':

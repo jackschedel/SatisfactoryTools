@@ -9,10 +9,11 @@ export interface IProductionData
 export interface IProductionDataMetadata
 {
 
-	name: string|null;
-	icon: string|null;
-	schemaVersion: number;
-	gameVersion: string;
+name: string|null;
+icon: string|null;
+schemaVersion: number;
+gameVersion: string;
+tabId?: string;
 
 }
 

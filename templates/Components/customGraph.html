@@ -1,0 +1,10 @@
+<div class="custom-graph-toolbar p-2">
+<button class="btn btn-sm" ng-class="{'btn-warning': $ctrl.frozen, 'btn-outline-secondary': !$ctrl.frozen}" ng-click="$ctrl.toggleFreeze()">
+<span class="fas fa-fw" ng-class="{'fa-lock': $ctrl.frozen, 'fa-unlock': !$ctrl.frozen}"></span>
+{{$ctrl.frozen ? 'Unfreeze Graph' : 'Freeze Graph'}}
+</button>
+<span ng-if="$ctrl.frozen" class="ml-2 text-warning">
+<span class="fas fa-info-circle"></span> Graph is frozen — solver input changes will not update this graph.
+</span>
+</div>
+<div class="custom-graph-container" style="width: 100%; height: 100%;"></div>

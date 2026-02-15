@@ -7,6 +7,7 @@ import {ItemIconDirective} from '@src/Module/Directives/ItemIconDirective';
 import {RecentlyVisitedItemsService} from '@src/Module/Services/RecentlyVisitedItemsService';
 import {ProductionController} from '@src/Module/Controllers/ProductionController';
 import {VisualizationComponent} from '@src/Module/Components/VisualizationComponent';
+import {CustomGraphComponent} from '@src/Module/Components/CustomGraphComponent';
 import {ItemFilterComponent} from '@src/Module/Components/ItemFilterComponent';
 import {ItemFiltersService} from '@src/Module/Services/ItemFiltersService';
 import {ApplicationBreadcrumbsComponent} from '@src/Module/Components/ApplicationBreadcrumbsComponent';
@@ -379,6 +380,7 @@ export class AppModule
 		});
 
 		this.app.component('visualization', new VisualizationComponent);
+this.app.component('customGraph', new CustomGraphComponent);
 		this.app.component('itemFilter', new ItemFilterComponent);
 		this.app.component('buildingFilter', new BuildingFilterComponent);
 		this.app.component('schematicFilter', new SchematicFilterComponent);
