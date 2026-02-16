@@ -17,6 +17,7 @@ import {ProductionResultFactory} from '@src/Tools/Production/Result/ProductionRe
 import {IGeneratorSchema} from '@src/Schema/IGeneratorSchema';
 import {IFuelSchema} from '@src/Schema/IFuelSchema';
 import {Configuration} from '@src/Configuration';
+import {IProductionDataApiResponse} from '@src/Tools/Production/IProductionData';
 
 export class ProductionTab
 {
@@ -41,15 +42,20 @@ export class ProductionTab
 		overviewCollapsed: {},
 	};
 
-	public tab: string = 'production';
-	public resultTab: string = 'visualization';
-	public shareLink: string = '';
-	public resultStatus: ResultStatus = ResultStatus.NO_INPUT;
-	public resultNew: ProductionResult|undefined;
-	public data: IProductionData;
+public tab: string = 'production';
+public resultTab: string = 'visualization';
+public shareLink: string = '';
+public resultStatus: ResultStatus = ResultStatus.NO_INPUT;
+public resultNew: ProductionResult|undefined;
+public data: IProductionData;
+public intermediateItems: string[] = [];
+public intermediateNodeItems: IItemSchema[] = [];
+public selectedIntermediateNode: IItemSchema|null = null;
 
-	private readonly unregisterCallback: () => void;
-	private firstRun: boolean = true;
+private readonly unregisterCallback: () => void;
+private firstRun: boolean = true;
+private lastApiRequest: IProductionDataApiRequest|null = null;
+private lastResponse: IProductionDataApiResponse|null = null;
 
 	public constructor(private readonly scope: IProductionControllerScope, productionData?: IProductionData)
 	{
@@ -71,12 +77,20 @@ if (!this.data.request.defaultClockSpeed) {
 				this.data.request.blockedByproducts = [];
 				this.data.request.optimisation = 'resources';
 			}
-		} else {
-			this.resetData();
-			this.addEmptyProduct();
-			this.addEmptyClock();
-			this.addEmptyInput();
-		}
+} else {
+this.resetData();
+this.addEmptyProduct();
+this.addEmptyClock();
+this.addEmptyInput();
+}
+
+// Load intermediate nodes from saved data
+if (this.data.intermediateNodes && this.data.intermediateNodes.length > 0) {
+this.intermediateItems = [...this.data.intermediateNodes];
+this.intermediateNodeItems = this.intermediateItems
+.filter((className) => className in (rawData as any as IJsonSchema).items)
+.map((className) => (rawData as any as IJsonSchema).items[className]);
+}
 
 		this.unregisterCallback = scope.$watch(() => {
 			return this.data.request;
@@ -127,9 +141,15 @@ if (!this.data.request.defaultClockSpeed) {
 						return;
 					}
 
-					const factory = new ProductionResultFactory;
-					this.resultNew = factory.create(apiRequest, result, rawData as any as IJsonSchema);
-					this.resultStatus = ResultStatus.RESULT;
+this.lastApiRequest = apiRequest;
+this.lastResponse = result;
+
+const factory = new ProductionResultFactory;
+this.resultNew = factory.create(apiRequest, result, rawData as any as IJsonSchema);
+if (this.intermediateItems.length > 0) {
+this.resultNew.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
+}
+this.resultStatus = ResultStatus.RESULT;
 				};
 
 				if ($timeout) {
@@ -565,7 +585,65 @@ tabId: ProductionTab.generateTabId(),
 		return result;
 	}
 
-	public recalculateWeights()
+	public addIntermediateNode(item: IItemSchema): void
+{
+if (item && this.intermediateNodeItems.indexOf(item) === -1) {
+this.intermediateNodeItems.push(item);
+this.syncIntermediateNodes();
+this.rebuildVisualization();
+}
+this.scope.$timeout(() => {
+this.selectedIntermediateNode = null;
+});
+}
+
+public removeIntermediateNode(index: number): void
+{
+this.intermediateNodeItems.splice(index, 1);
+this.syncIntermediateNodes();
+this.rebuildVisualization();
+}
+
+private syncIntermediateNodes(): void
+{
+this.intermediateItems = this.intermediateNodeItems.map((item) => item.className);
+this.data.intermediateNodes = [...this.intermediateItems];
+this.scope.saveState();
+}
+
+private rebuildVisualization(): void
+{
+if (!this.lastResponse || !this.lastApiRequest) {
+return;
+}
+
+this.scope.$timeout(() => {
+const factory = new ProductionResultFactory;
+this.resultNew = factory.create(this.lastApiRequest!, this.lastResponse!, rawData as any as IJsonSchema);
+if (this.intermediateItems.length > 0) {
+this.resultNew!.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
+}
+this.resultStatus = ResultStatus.RESULT;
+});
+}
+
+public rebuildWithIntermediateNodes(intermediateItems: string[]): void
+{
+this.intermediateItems = intermediateItems;
+this.data.intermediateNodes = [...intermediateItems];
+if (!this.lastResponse || !this.lastApiRequest) {
+return;
+}
+
+const factory = new ProductionResultFactory;
+this.resultNew = factory.create(this.lastApiRequest, this.lastResponse, rawData as any as IJsonSchema);
+if (this.intermediateItems.length > 0) {
+this.resultNew.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
+}
+this.resultStatus = ResultStatus.RESULT;
+}
+
+public recalculateWeights()
 	{
 		for (const k in this.data.request.resourceWeight) {
 			this.data.request.resourceWeight[k] = this.getResourceWeight(k);

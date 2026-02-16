@@ -1,9 +1,20 @@
 export interface IProductionData
 {
 
-	metadata: IProductionDataMetadata;
-	request: IProductionDataRequest;
+metadata: IProductionDataMetadata;
+request: IProductionDataRequest;
+intermediateNodes?: string[];
+linkNodes?: ILinkNodeDescriptor[];
 
+}
+
+export interface ILinkNodeDescriptor
+{
+fromNodeKey: string;
+toNodeKey: string;
+itemClassName: string;
+linkOutPos?: {x: number, y: number};
+linkInPos?: {x: number, y: number};
 }
 
 export interface IProductionDataMetadata

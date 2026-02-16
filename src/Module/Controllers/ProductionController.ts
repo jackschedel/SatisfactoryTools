@@ -32,7 +32,7 @@ export class ProductionController
 		return recipe1.name.localeCompare(recipe2.name);
 	});
 
-	public result: string;
+public result: string;
 
 	public options: {} = {
 		'items/min': Constants.PRODUCTION_TYPE.PER_MINUTE,
@@ -156,12 +156,13 @@ export class ProductionController
 		return data.getRawData().buildings[className];
 	}
 
-	public getRecipe(className: string): IRecipeSchema|null
-	{
-		return data.getRawData().recipes[className];
-	}
+public getRecipe(className: string): IRecipeSchema|null
+{
+return data.getRawData().recipes[className];
+}
 
-	private saveState(): void
+
+private saveState(): void
 	{
 		const save: IProductionData[] = [];
 		for (const tab of this.tabs) {

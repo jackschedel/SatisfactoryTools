@@ -952,11 +952,37 @@
 			</div>
 		</div>
 
-		<div ng-show="ctrl.tab.resultTab === 'visualization'">
-			<div class="border-left border-right border-secondary p-2">
-				You can move the nodes around using drag'n'drop.
-			</div>
-			<div class="visualization-resizable">
+<div ng-show="ctrl.tab.resultTab === 'visualization'">
+<div class="border-left border-right border-secondary p-2">
+You can move the nodes around using drag'n'drop.
+</div>
+<div class="border-left border-right border-secondary p-2">
+<div class="row">
+<div class="col-md-4">
+<label><strong>Intermediate nodes</strong></label>
+<div ng-repeat="node in ctrl.tab.intermediateNodeItems track by $index" style="margin-bottom: 4px; padding-left: 16px;">
+<div class="d-flex align-items-center">
+<item-icon item="node" size="20" hide-tooltip="true"></item-icon>
+<span class="ml-1 flex-grow-1">{{node.name}}</span>
+<button ng-click="ctrl.tab.removeIntermediateNode($index)" type="button" class="btn btn-outline-danger btn-sm ml-2"><i class="fas fa-times"></i></button>
+</div>
+</div>
+<ui-select ng-model="ctrl.tab.selectedIntermediateNode" on-select="ctrl.tab.addIntermediateNode($item)" class="production-item-picker">
+<ui-select-match placeholder="Search or select item to add...">
+<span>
+<item-icon dynamic="true" item="$select.selected.className" class="mr-2" size="24" hide-tooltip="true"></item-icon>
+{{$select.selected.name}}
+</span>
+</ui-select-match>
+<ui-select-choices repeat="item in (ctrl.craftableItems | filter:{name:$select.search}) track by item.className">
+<item-icon item="item" hide-tooltip="true"></item-icon>
+<span class="pl-2" ng-bind="item.name"></span>
+</ui-select-choices>
+</ui-select>
+</div>
+</div>
+</div>
+<div class="visualization-resizable">
 				<visualization result="ctrl.tab.resultNew" ng-class="{visualization: 1, loading: ctrl.tab.state.resultLoading}"></visualization>
 			</div>
 		</div>
