@@ -178,6 +178,68 @@ private static readonly LINK_NODES_STORAGE_KEY = 'customGraphLinkNodes';
 		this.$interval.cancel(this.interval);
 	}
 
+public autoArrange(): void
+{
+if (!this.network || !this.nodesDataSet || !this.edgesDataSet) {
+return;
+}
+
+const nodes = this.nodesDataSet;
+const edges = this.edgesDataSet;
+
+const elkGraph: IElkGraph = {
+id: 'root',
+layoutOptions: {
+'elk.algorithm': 'org.eclipse.elk.layered',
+'org.eclipse.elk.layered.nodePlacement.favorStraightEdges': true as unknown as string,
+'org.eclipse.elk.spacing.nodeNode': 40 + '',
+},
+children: [],
+edges: [],
+};
+
+nodes.forEach((node) => {
+elkGraph.children.push({
+id: node.id.toString(),
+width: 250,
+height: 100,
+});
+});
+
+edges.forEach((edge) => {
+elkGraph.edges.push({
+id: '',
+source: edge.from.toString(),
+target: edge.to.toString(),
+});
+});
+
+const elk = new ELK();
+elk.layout(elkGraph).then((data) => {
+nodes.forEach((node) => {
+const id = node.id;
+if (data.children) {
+for (const item of data.children) {
+if (parseInt(item.id, 10) === id) {
+nodes.update({
+id: id,
+x: item.x,
+y: item.y,
+});
+return;
+}
+}
+}
+});
+
+this.network.fit();
+this.saveNodePositions();
+if (this.linkPairs.length > 0) {
+this.saveLinkNodes();
+}
+});
+}
+
 public exportGraph(): void
 {
 if (!this.network || !this.nodesDataSet || !this.edgesDataSet) {

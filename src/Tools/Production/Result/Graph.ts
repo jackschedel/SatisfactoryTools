@@ -79,14 +79,9 @@ continue outputLoop;
 
 public insertIntermediateNodes(intermediateItems: string[], data: IJsonSchema): void
 {
-const waterClassName = Constants.WATER_CLASSNAME;
 
 for (const itemClassName of intermediateItems) {
-if (itemClassName === waterClassName) {
-this.insertWaterIntermediateNodes(itemClassName, data);
-} else {
 this.insertSingleIntermediateNode(itemClassName, data);
-}
 }
 }
 
@@ -145,82 +140,4 @@ const entry = targetAmounts[id];
 this.addEdge(new GraphEdge(intermediateNode, entry.node, new ItemAmount(itemClassName, entry.amount)));
 }
 }
-
-private insertWaterIntermediateNodes(itemClassName: string, data: IJsonSchema): void
-{
-const itemSchema = data.items[itemClassName];
-if (!itemSchema) {
-return;
-}
-
-const matchingEdges = this.edges.filter((edge) => edge.itemAmount.item === itemClassName);
-if (matchingEdges.length === 0) {
-return;
-}
-
-// Create per-recipe intermediate nodes for sources (recipes that output water)
-const sourceIntermediates = new Map<GraphNode, IntermediateNode>();
-const sourceAmounts = new Map<GraphNode, number>();
-
-// Create per-recipe intermediate nodes for targets (recipes that input water)
-const targetIntermediates = new Map<GraphNode, IntermediateNode>();
-const targetAmounts = new Map<GraphNode, number>();
-
-for (const edge of matchingEdges) {
-// Source intermediate for recipe/generator nodes that output water
-if (edge.from instanceof RecipeNode || edge.from instanceof GeneratorNode) {
-if (!sourceIntermediates.has(edge.from)) {
-const name = edge.from instanceof RecipeNode ? edge.from.recipeData.recipe.name : 'Generator';
-const node = new IntermediateNode(itemSchema, name);
-this.addNode(node);
-sourceIntermediates.set(edge.from, node);
-sourceAmounts.set(edge.from, 0);
-}
-sourceAmounts.set(edge.from, sourceAmounts.get(edge.from)! + edge.itemAmount.amount);
-}
-
-// Target intermediate for recipe/generator nodes that input water
-if (edge.to instanceof RecipeNode || edge.to instanceof GeneratorNode) {
-if (!targetIntermediates.has(edge.to)) {
-const name = edge.to instanceof RecipeNode ? edge.to.recipeData.recipe.name : 'Generator';
-const node = new IntermediateNode(itemSchema, name);
-this.addNode(node);
-targetIntermediates.set(edge.to, node);
-targetAmounts.set(edge.to, 0);
-}
-targetAmounts.set(edge.to, targetAmounts.get(edge.to)! + edge.itemAmount.amount);
-}
-}
-
-// Set total amounts on intermediate nodes
-sourceAmounts.forEach((amount, source) => {
-sourceIntermediates.get(source)!.totalAmount = amount;
-});
-targetAmounts.forEach((amount, target) => {
-targetIntermediates.get(target)!.totalAmount = amount;
-});
-
-// Take a snapshot of matching edges before modifying
-const edgesToProcess = [...matchingEdges];
-
-// Remove all water edges that involve at least one recipe/generator node
-for (const edge of edgesToProcess) {
-if (sourceIntermediates.has(edge.from) || targetIntermediates.has(edge.to)) {
-this.removeEdge(edge);
-}
-}
-
-// Create one edge per source recipe -> its intermediate (terminal, no outgoing edges)
-sourceAmounts.forEach((amount, source) => {
-const interm = sourceIntermediates.get(source)!;
-this.addEdge(new GraphEdge(source, interm, new ItemAmount(itemClassName, amount)));
-});
-
-// Create one edge per target intermediate -> its recipe (terminal, no incoming edges)
-targetAmounts.forEach((amount, target) => {
-const interm = targetIntermediates.get(target)!;
-this.addEdge(new GraphEdge(interm, target, new ItemAmount(itemClassName, amount)));
-});
-}
-
 }
