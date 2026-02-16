@@ -452,10 +452,10 @@ this.saveLinkNodes();
 					this.applyStoredLinks(nodes, edges, result, savedPositions);
 
 					// Register double-click handler for link node creation/removal
-					this.network.on('doubleClick', (params: any) => {
-						if (params.nodes.length === 1) {
-							this.handleNodeDoubleClick(params.nodes[0], nodes, edges);
-						} else if (params.edges.length === 1 && params.nodes.length === 0) {
+				this.network.on('doubleClick', (params: any) => {
+					if (params.nodes.length === 1) {
+						this.handleNodeDoubleClick(params.nodes[0], nodes, edges, result);
+					} else if (params.edges.length === 1 && params.nodes.length === 0) {
 							this.handleEdgeDoubleClick(params.edges[0], nodes, edges, result);
 						}
 					});
@@ -526,31 +526,85 @@ graphEdge.from, graphEdge.to,
 		this.saveNodePositions();
 	}
 
-	private handleNodeDoubleClick(nodeId: number, nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>): void
+	private handleNodeDoubleClick(nodeId: number, nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult): void
 	{
+		// Check if it's a link node being removed
 		const pairIndex = this.linkPairs.findIndex((p) => p.linkOutId === nodeId || p.linkInId === nodeId);
-		if (pairIndex === -1) {
+		if (pairIndex !== -1) {
+			const pair = this.linkPairs[pairIndex];
+
+			// Remove link edges
+			edges.remove(pair.outEdgeId);
+			edges.remove(pair.inEdgeId);
+
+			// Remove link nodes
+			nodes.remove(pair.linkOutId);
+			nodes.remove(pair.linkInId);
+
+			// Restore original edge
+			edges.add(pair.originalEdgeData);
+
+			// Remove from tracking
+			this.linkPairs.splice(pairIndex, 1);
+
+			this.saveLinkNodes();
+			this.saveNodePositions();
 			return;
 		}
 
-		const pair = this.linkPairs[pairIndex];
+		// Check if it's an IntermediateNode — auto-create links for all its edges
+		const graphNode = result.graph.nodes.find((n) => n.id === nodeId);
+		if (graphNode && graphNode instanceof IntermediateNode) {
+			const connectedEdges = result.graph.edges.filter((e) => e.from.id === nodeId || e.to.id === nodeId);
+			let created = false;
+			for (const graphEdge of connectedEdges) {
+				// Skip edges that are already split
+				const descriptor: ILinkNodeDescriptor = {
+					fromNodeKey: getNodeKey(graphEdge.from),
+					toNodeKey: getNodeKey(graphEdge.to),
+					itemClassName: graphEdge.itemAmount.item,
+				};
+				if (this.linkPairs.some((p) =>
+					p.descriptor.fromNodeKey === descriptor.fromNodeKey &&
+					p.descriptor.toNodeKey === descriptor.toNodeKey &&
+					p.descriptor.itemClassName === descriptor.itemClassName
+				)) {
+					continue;
+				}
 
-		// Remove link edges
-		edges.remove(pair.outEdgeId);
-		edges.remove(pair.inEdgeId);
+				// Don't allow splitting a link edge
+				if (this.linkPairs.some((p) => p.outEdgeId === graphEdge.id || p.inEdgeId === graphEdge.id)) {
+					continue;
+				}
 
-		// Remove link nodes
-		nodes.remove(pair.linkOutId);
-		nodes.remove(pair.linkInId);
+				const originalEdgeData = edges.get(graphEdge.id);
+				if (!originalEdgeData) {
+					continue;
+				}
 
-		// Restore original edge
-		edges.add(pair.originalEdgeData);
+				const positions = this.network.getPositions([graphEdge.from.id, graphEdge.to.id]);
+				const fromPos = positions[graphEdge.from.id];
+				const toPos = positions[graphEdge.to.id];
+				if (!fromPos || !toPos) {
+					continue;
+				}
 
-		// Remove from tracking
-		this.linkPairs.splice(pairIndex, 1);
+				this.createLinkPair(
+					nodes, edges,
+					graphEdge.from.id, graphEdge.to.id,
+					originalEdgeData, descriptor,
+					graphEdge.itemAmount.item, graphEdge.itemAmount.amount,
+					fromPos, toPos,
+					graphEdge.from, graphEdge.to,
+				);
+				created = true;
+			}
 
-		this.saveLinkNodes();
-		this.saveNodePositions();
+			if (created) {
+				this.saveLinkNodes();
+				this.saveNodePositions();
+			}
+		}
 	}
 
 	private createLinkPair(
