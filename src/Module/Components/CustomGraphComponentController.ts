@@ -17,6 +17,9 @@ import {SinkNode} from '@src/Tools/Production/Result/Nodes/SinkNode';
 import {GeneratorNode} from '@src/Tools/Production/Result/Nodes/GeneratorNode';
 import {IntermediateNode} from '@src/Tools/Production/Result/Nodes/IntermediateNode';
 import {ILinkNodeDescriptor} from '@src/Tools/Production/IProductionData';
+import {Numbers} from '@src/Utils/Numbers';
+import {RecipeData} from '@src/Tools/Production/Result/RecipeData';
+import {MachineGroup} from '@src/Tools/Production/Result/MachineGroup';
 
 interface ILinkPair
 {
@@ -857,78 +860,113 @@ this.saveLinkNodesFromDescriptors(appliedDescriptors);
 
 // ==================== Split Node Methods ====================
 
-private splitRecipeByOutput(nodeId: number, recipeNode: RecipeNode, nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult): void
-{
-// Only allow split if recipe has exactly 1 product item type
-if (recipeNode.recipeData.recipe.products.length !== 1) {
-return;
+	private splitRecipeByOutput(nodeId: number, recipeNode: RecipeNode, nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult): void
+	{
+		// Only allow split if recipe has exactly 1 product item type
+		if (recipeNode.recipeData.recipe.products.length !== 1) {
+			return;
+		}
+
+		// Find output edges from this node in the graph
+		const outputEdges = result.graph.edges.filter((e) => e.from.id === nodeId);
+		// If 1 or fewer outputs, nothing to split
+		if (outputEdges.length <= 1) {
+			return;
+		}
+
+		// Check this node isn't already part of a split group
+		if (this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
+			return;
+		}
+
+		// Gather all vis edges connected to this node
+		const allVisEdges = this.getVisEdgesForNode(nodeId, edges);
+		// Separate into input edges and output edges
+		const visOutputEdges = allVisEdges.filter((e: any) => e.from === nodeId);
+		const visInputEdges = allVisEdges.filter((e: any) => e.to === nodeId);
+
+		// Save original node data
+		const originalNodeData = nodes.get(nodeId);
+		if (!originalNodeData) {
+			return;
+		}
+
+		// Save all original edge data
+		const originalEdgesData = allVisEdges.map((e: any) => ({...e}));
+
+		// Get original node position
+		const positions = this.network.getPositions([nodeId]);
+		const originalPos = positions[nodeId] || {x: 0, y: 0};
+
+		const recipeKey = getNodeKey(recipeNode);
+		const descriptor: ISplitDescriptor = {
+			recipeNodeKey: recipeKey,
+			splitType: 'output',
+		};
+
+		const splitNodeIds: number[] = [];
+		const splitEdgeIds: number[] = [];
+
+		// Calculate total output amount across all output edges
+		const totalOutputAmount = outputEdges.reduce((sum, e) => sum + e.itemAmount.amount, 0);
+
+		// Build a map from vis edge id to graph edge for amount lookup
+		const visEdgeToGraphEdge: {[id: number]: typeof outputEdges[0]} = {};
+		for (const graphEdge of outputEdges) {
+			visEdgeToGraphEdge[graphEdge.id] = graphEdge;
+		}
+
+		// Remove all edges connected to the original node
+		for (const visEdge of allVisEdges) {
+			edges.remove(visEdge.id);
+		}
+		// Remove the original node
+		nodes.remove(nodeId);
+
+		// Create one split node per output edge
+		for (let i = 0; i < visOutputEdges.length; i++) {
+			const outEdge = visOutputEdges[i];
+			const splitNodeId = this.splitNodeIdCounter++;
+			splitNodeIds.push(splitNodeId);
+
+			// Position split nodes spread out from original position
+			const offsetY = (i - (visOutputEdges.length - 1) / 2) * 120;
+
+			// Calculate proportional machine amount based on output edge flow
+			const graphEdge = visEdgeToGraphEdge[outEdge.id];
+			const fraction = (graphEdge && totalOutputAmount > 0) ? graphEdge.itemAmount.amount / totalOutputAmount : 1 / visOutputEdges.length;
+			const splitAmount = recipeNode.recipeData.amount * fraction;
+
+// Create split node label with proportional machine count
+const splitLabel = '<b>Split ' + recipeNode.recipeData.recipe.name + '</b>\n' + Strings.formatNumber(splitAmount) + 'x ' + recipeNode.recipeData.machine.name + '\n<i>' + recipeNode.recipeData.clockSpeed + '% clock speed</i>';
+
+// Create hover tooltip matching RecipeNode.getTooltip() format exactly
+const splitRecipeData = new RecipeData(recipeNode.recipeData.machine, recipeNode.recipeData.recipe, splitAmount, recipeNode.recipeData.clockSpeed);
+const splitMachineGroup = new MachineGroup(splitRecipeData);
+const splitMultiplier = splitAmount * recipeNode.recipeData.machine.metadata.manufacturingSpeed * (recipeNode.recipeData.clockSpeed / 100) * (60 / recipeNode.recipeData.recipe.time);
+
+const titleLines: string[] = [];
+for (const machine of splitMachineGroup.machines) {
+titleLines.push(machine.amount + 'x ' + recipeNode.recipeData.machine.name + ' at <b>' + machine.clockSpeed + '%</b> clock speed');
 }
-
-// Find output edges from this node in the graph
-const outputEdges = result.graph.edges.filter((e) => e.from.id === nodeId);
-// If 1 or fewer outputs, nothing to split
-if (outputEdges.length <= 1) {
-return;
+titleLines.push('');
+titleLines.push('Needed power: ' + Numbers.round(splitMachineGroup.power.average) + ' MW');
+titleLines.push('');
+for (const ingredient of recipeNode.recipeData.recipe.ingredients) {
+const item = model.getItem(ingredient.item);
+titleLines.push('<b>IN:</b> ' + Strings.formatItemAmount(ingredient.amount * splitMultiplier, ingredient.item) + ' - ' + item.prototype.name);
 }
-
-// Check this node isn't already part of a split group
-if (this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
-return;
+for (const product of recipeNode.recipeData.recipe.products) {
+const item = model.getItem(product.item);
+titleLines.push('<b>OUT:</b> ' + Strings.formatItemAmount(product.amount * splitMultiplier, product.item) + ' - ' + item.prototype.name);
 }
-
-// Gather all vis edges connected to this node
-const allVisEdges = this.getVisEdgesForNode(nodeId, edges);
-// Separate into input edges and output edges
-const visOutputEdges = allVisEdges.filter((e: any) => e.from === nodeId);
-const visInputEdges = allVisEdges.filter((e: any) => e.to === nodeId);
-
-// Save original node data
-const originalNodeData = nodes.get(nodeId);
-if (!originalNodeData) {
-return;
-}
-
-// Save all original edge data
-const originalEdgesData = allVisEdges.map((e: any) => ({...e}));
-
-// Get original node position
-const positions = this.network.getPositions([nodeId]);
-const originalPos = positions[nodeId] || {x: 0, y: 0};
-
-const recipeKey = getNodeKey(recipeNode);
-const descriptor: ISplitDescriptor = {
-recipeNodeKey: recipeKey,
-splitType: 'output',
-};
-
-const splitNodeIds: number[] = [];
-const splitEdgeIds: number[] = [];
-
-// Remove all edges connected to the original node
-for (const visEdge of allVisEdges) {
-edges.remove(visEdge.id);
-}
-// Remove the original node
-nodes.remove(nodeId);
-
-// Create one split node per output edge
-for (let i = 0; i < visOutputEdges.length; i++) {
-const outEdge = visOutputEdges[i];
-const splitNodeId = this.splitNodeIdCounter++;
-splitNodeIds.push(splitNodeId);
-
-// Position split nodes spread out from original position
-const offsetY = (i - (visOutputEdges.length - 1) / 2) * 120;
-
-// Get the target node name for the label
-const targetGraphNode = result.graph.nodes.find((n) => n.id === outEdge.to);
-
-// Create split node label
-const splitLabel = '<b>Split ' + recipeNode.recipeData.recipe.name + '</b>\n' + Strings.formatNumber(recipeNode.recipeData.amount) + 'x ' + recipeNode.recipeData.machine.name + '\n<i>' + recipeNode.recipeData.clockSpeed + '% clock speed</i>';
+const titleEl = document.createElement('div');
+titleEl.innerHTML = titleLines.join('<br>');
 
 nodes.add({
 id: splitNodeId,
 label: splitLabel,
+title: titleEl as unknown as string,
 x: originalPos.x,
 y: originalPos.y + offsetY,
 color: {
@@ -945,43 +983,43 @@ color: 'rgba(238, 238, 238, 1)',
 });
 
 // Create the output edge from split node to the target
-const splitOutEdgeId = this.splitEdgeIdCounter++;
-splitEdgeIds.push(splitOutEdgeId);
-edges.add({
-id: splitOutEdgeId,
-from: splitNodeId,
-to: outEdge.to,
-label: outEdge.label || '',
-color: outEdge.color || {
-color: 'rgba(105, 125, 145, 1)',
-highlight: 'rgba(134, 151, 167, 1)',
-},
-font: outEdge.font || {
-color: 'rgba(238, 238, 238, 1)',
-},
-smooth: outEdge.smooth,
-} as any);
+			const splitOutEdgeId = this.splitEdgeIdCounter++;
+			splitEdgeIds.push(splitOutEdgeId);
+			edges.add({
+				id: splitOutEdgeId,
+				from: splitNodeId,
+				to: outEdge.to,
+				label: outEdge.label || '',
+				color: outEdge.color || {
+					color: 'rgba(105, 125, 145, 1)',
+					highlight: 'rgba(134, 151, 167, 1)',
+				},
+				font: outEdge.font || {
+					color: 'rgba(238, 238, 238, 1)',
+				},
+				smooth: outEdge.smooth,
+			} as any);
 
-// Duplicate all input edges to this split node
-for (const inEdge of visInputEdges) {
-const splitInEdgeId = this.splitEdgeIdCounter++;
-splitEdgeIds.push(splitInEdgeId);
-edges.add({
-id: splitInEdgeId,
-from: inEdge.from,
-to: splitNodeId,
-label: inEdge.label || '',
-color: inEdge.color || {
-color: 'rgba(105, 125, 145, 1)',
-highlight: 'rgba(134, 151, 167, 1)',
-},
-font: inEdge.font || {
-color: 'rgba(238, 238, 238, 1)',
-},
-smooth: inEdge.smooth,
-} as any);
-}
-}
+			// Duplicate all input edges to this split node
+			for (const inEdge of visInputEdges) {
+				const splitInEdgeId = this.splitEdgeIdCounter++;
+				splitEdgeIds.push(splitInEdgeId);
+				edges.add({
+					id: splitInEdgeId,
+					from: inEdge.from,
+					to: splitNodeId,
+					label: inEdge.label || '',
+					color: inEdge.color || {
+						color: 'rgba(105, 125, 145, 1)',
+						highlight: 'rgba(134, 151, 167, 1)',
+					},
+					font: inEdge.font || {
+						color: 'rgba(238, 238, 238, 1)',
+					},
+					smooth: inEdge.smooth,
+				} as any);
+			}
+		}
 
 const group: ISplitGroup = {
 originalNodeId: nodeId,
@@ -997,79 +1035,113 @@ this.saveSplitNodes();
 this.saveNodePositions();
 }
 
-private splitRecipeByInput(nodeId: number, recipeNode: RecipeNode, nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult): void
-{
-// Only allow split if recipe has exactly 1 ingredient item type
-if (recipeNode.recipeData.recipe.ingredients.length !== 1) {
-return;
+	private splitRecipeByInput(nodeId: number, recipeNode: RecipeNode, nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult): void
+	{
+		// Only allow split if recipe has exactly 1 ingredient item type
+		if (recipeNode.recipeData.recipe.ingredients.length !== 1) {
+			return;
+		}
+
+		// Find input edges to this node in the graph
+		const inputEdges = result.graph.edges.filter((e) => e.to.id === nodeId);
+		// If 1 or fewer inputs, nothing to split
+		if (inputEdges.length <= 1) {
+			return;
+		}
+
+		// Check this node isn't already part of a split group
+		if (this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
+			return;
+		}
+
+		// Gather all vis edges connected to this node
+		const allVisEdges = this.getVisEdgesForNode(nodeId, edges);
+		// Separate into input edges and output edges
+		const visOutputEdges = allVisEdges.filter((e: any) => e.from === nodeId);
+		const visInputEdges = allVisEdges.filter((e: any) => e.to === nodeId);
+
+		// Save original node data
+		const originalNodeData = nodes.get(nodeId);
+		if (!originalNodeData) {
+			return;
+		}
+
+		// Save all original edge data
+		const originalEdgesData = allVisEdges.map((e: any) => ({...e}));
+
+		// Get original node position
+		const positions = this.network.getPositions([nodeId]);
+		const originalPos = positions[nodeId] || {x: 0, y: 0};
+
+		const recipeKey = getNodeKey(recipeNode);
+		const descriptor: ISplitDescriptor = {
+			recipeNodeKey: recipeKey,
+			splitType: 'input',
+		};
+
+		const splitNodeIds: number[] = [];
+		const splitEdgeIds: number[] = [];
+
+		// Calculate total input amount across all input edges
+		const totalInputAmount = inputEdges.reduce((sum, e) => sum + e.itemAmount.amount, 0);
+
+		// Build a map from vis edge id to graph edge for amount lookup
+		const visEdgeToGraphEdge: {[id: number]: typeof inputEdges[0]} = {};
+		for (const graphEdge of inputEdges) {
+			visEdgeToGraphEdge[graphEdge.id] = graphEdge;
+		}
+
+		// Remove all edges connected to the original node
+		for (const visEdge of allVisEdges) {
+			edges.remove(visEdge.id);
+		}
+		// Remove the original node
+		nodes.remove(nodeId);
+
+		// Create one split node per input edge
+		for (let i = 0; i < visInputEdges.length; i++) {
+			const inEdge = visInputEdges[i];
+			const splitNodeId = this.splitNodeIdCounter++;
+			splitNodeIds.push(splitNodeId);
+
+			// Position split nodes spread out from original position
+			const offsetY = (i - (visInputEdges.length - 1) / 2) * 120;
+
+			// Calculate proportional machine amount based on input edge flow
+			const graphEdge = visEdgeToGraphEdge[inEdge.id];
+			const fraction = (graphEdge && totalInputAmount > 0) ? graphEdge.itemAmount.amount / totalInputAmount : 1 / visInputEdges.length;
+			const splitAmount = recipeNode.recipeData.amount * fraction;
+
+// Create split node label with proportional machine count
+const splitLabel = '<b>Split ' + recipeNode.recipeData.recipe.name + '</b>\n' + Strings.formatNumber(splitAmount) + 'x ' + recipeNode.recipeData.machine.name + '\n<i>' + recipeNode.recipeData.clockSpeed + '% clock speed</i>';
+
+// Create hover tooltip matching RecipeNode.getTooltip() format exactly
+const splitRecipeData = new RecipeData(recipeNode.recipeData.machine, recipeNode.recipeData.recipe, splitAmount, recipeNode.recipeData.clockSpeed);
+const splitMachineGroup = new MachineGroup(splitRecipeData);
+const splitMultiplier = splitAmount * recipeNode.recipeData.machine.metadata.manufacturingSpeed * (recipeNode.recipeData.clockSpeed / 100) * (60 / recipeNode.recipeData.recipe.time);
+
+const titleLines: string[] = [];
+for (const machine of splitMachineGroup.machines) {
+titleLines.push(machine.amount + 'x ' + recipeNode.recipeData.machine.name + ' at <b>' + machine.clockSpeed + '%</b> clock speed');
 }
-
-// Find input edges to this node in the graph
-const inputEdges = result.graph.edges.filter((e) => e.to.id === nodeId);
-// If 1 or fewer inputs, nothing to split
-if (inputEdges.length <= 1) {
-return;
+titleLines.push('');
+titleLines.push('Needed power: ' + Numbers.round(splitMachineGroup.power.average) + ' MW');
+titleLines.push('');
+for (const ingredient of recipeNode.recipeData.recipe.ingredients) {
+const item = model.getItem(ingredient.item);
+titleLines.push('<b>IN:</b> ' + Strings.formatItemAmount(ingredient.amount * splitMultiplier, ingredient.item) + ' - ' + item.prototype.name);
 }
-
-// Check this node isn't already part of a split group
-if (this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
-return;
+for (const product of recipeNode.recipeData.recipe.products) {
+const item = model.getItem(product.item);
+titleLines.push('<b>OUT:</b> ' + Strings.formatItemAmount(product.amount * splitMultiplier, product.item) + ' - ' + item.prototype.name);
 }
-
-// Gather all vis edges connected to this node
-const allVisEdges = this.getVisEdgesForNode(nodeId, edges);
-// Separate into input edges and output edges
-const visOutputEdges = allVisEdges.filter((e: any) => e.from === nodeId);
-const visInputEdges = allVisEdges.filter((e: any) => e.to === nodeId);
-
-// Save original node data
-const originalNodeData = nodes.get(nodeId);
-if (!originalNodeData) {
-return;
-}
-
-// Save all original edge data
-const originalEdgesData = allVisEdges.map((e: any) => ({...e}));
-
-// Get original node position
-const positions = this.network.getPositions([nodeId]);
-const originalPos = positions[nodeId] || {x: 0, y: 0};
-
-const recipeKey = getNodeKey(recipeNode);
-const descriptor: ISplitDescriptor = {
-recipeNodeKey: recipeKey,
-splitType: 'input',
-};
-
-const splitNodeIds: number[] = [];
-const splitEdgeIds: number[] = [];
-
-// Remove all edges connected to the original node
-for (const visEdge of allVisEdges) {
-edges.remove(visEdge.id);
-}
-// Remove the original node
-nodes.remove(nodeId);
-
-// Create one split node per input edge
-for (let i = 0; i < visInputEdges.length; i++) {
-const inEdge = visInputEdges[i];
-const splitNodeId = this.splitNodeIdCounter++;
-splitNodeIds.push(splitNodeId);
-
-// Position split nodes spread out from original position
-const offsetY = (i - (visInputEdges.length - 1) / 2) * 120;
-
-// Get the source node name for the label
-const sourceGraphNode = result.graph.nodes.find((n) => n.id === inEdge.from);
-const sourceName = sourceGraphNode ? getNodeDisplayName(sourceGraphNode) : 'Node ' + inEdge.from;
-
-// Create split node label
-const splitLabel = '<b>Split: ' + recipeNode.recipeData.recipe.name + '</b>\n<i>← ' + sourceName + '</i>';
+const titleEl = document.createElement('div');
+titleEl.innerHTML = titleLines.join('<br>');
 
 nodes.add({
 id: splitNodeId,
 label: splitLabel,
+title: titleEl as unknown as string,
 x: originalPos.x,
 y: originalPos.y + offsetY,
 color: {
@@ -1086,43 +1158,43 @@ color: 'rgba(238, 238, 238, 1)',
 });
 
 // Create the input edge from the source to this split node
-const splitInEdgeId = this.splitEdgeIdCounter++;
-splitEdgeIds.push(splitInEdgeId);
-edges.add({
-id: splitInEdgeId,
-from: inEdge.from,
-to: splitNodeId,
-label: inEdge.label || '',
-color: inEdge.color || {
-color: 'rgba(105, 125, 145, 1)',
-highlight: 'rgba(134, 151, 167, 1)',
-},
-font: inEdge.font || {
-color: 'rgba(238, 238, 238, 1)',
-},
-smooth: inEdge.smooth,
-} as any);
+			const splitInEdgeId = this.splitEdgeIdCounter++;
+			splitEdgeIds.push(splitInEdgeId);
+			edges.add({
+				id: splitInEdgeId,
+				from: inEdge.from,
+				to: splitNodeId,
+				label: inEdge.label || '',
+				color: inEdge.color || {
+					color: 'rgba(105, 125, 145, 1)',
+					highlight: 'rgba(134, 151, 167, 1)',
+				},
+				font: inEdge.font || {
+					color: 'rgba(238, 238, 238, 1)',
+				},
+				smooth: inEdge.smooth,
+			} as any);
 
-// Duplicate all output edges from this split node
-for (const outEdge of visOutputEdges) {
-const splitOutEdgeId = this.splitEdgeIdCounter++;
-splitEdgeIds.push(splitOutEdgeId);
-edges.add({
-id: splitOutEdgeId,
-from: splitNodeId,
-to: outEdge.to,
-label: outEdge.label || '',
-color: outEdge.color || {
-color: 'rgba(105, 125, 145, 1)',
-highlight: 'rgba(134, 151, 167, 1)',
-},
-font: outEdge.font || {
-color: 'rgba(238, 238, 238, 1)',
-},
-smooth: outEdge.smooth,
-} as any);
-}
-}
+			// Duplicate all output edges from this split node
+			for (const outEdge of visOutputEdges) {
+				const splitOutEdgeId = this.splitEdgeIdCounter++;
+				splitEdgeIds.push(splitOutEdgeId);
+				edges.add({
+					id: splitOutEdgeId,
+					from: splitNodeId,
+					to: outEdge.to,
+					label: outEdge.label || '',
+					color: outEdge.color || {
+						color: 'rgba(105, 125, 145, 1)',
+						highlight: 'rgba(134, 151, 167, 1)',
+					},
+					font: outEdge.font || {
+						color: 'rgba(238, 238, 238, 1)',
+					},
+					smooth: outEdge.smooth,
+				} as any);
+			}
+		}
 
 const group: ISplitGroup = {
 originalNodeId: nodeId,
