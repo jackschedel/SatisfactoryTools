@@ -48,6 +48,28 @@ splitEdgeIds: number[];
 descriptor: ISplitDescriptor;
 }
 
+interface ICombinedLinkDescriptor
+{
+type: 'out' | 'in';
+itemClassName: string;
+sourceKey: string;
+originalDescriptors: ILinkNodeDescriptor[];
+combinedOutPos?: {x: number, y: number};
+combinedInPos?: {x: number, y: number};
+}
+
+interface ICombinedLinkGroup
+{
+type: 'out' | 'in';
+itemClassName: string;
+sourceKey: string;
+originalPairs: ILinkPair[];
+combinedOutId: number;
+combinedInId: number;
+combinedEdgeIds: number[];
+descriptor: ICombinedLinkDescriptor;
+}
+
 function getNodeKey(node: GraphNode): string
 {
 if (node instanceof RecipeNode) {
@@ -132,15 +154,24 @@ private nodesDataSet: DataSet<IVisNode>|null = null;
 private edgesDataSet: DataSet<IVisEdge>|null = null;
 private currentResult: ProductionResult|null = null;
 
-// Split node tracking
-private splitGroups: ISplitGroup[] = [];
-private splitNodeIdCounter: number = 300000;
-private splitEdgeIdCounter: number = 400000;
+	// Split node tracking
+	private splitGroups: ISplitGroup[] = [];
+	private splitNodeIdCounter: number = 300000;
+	private splitEdgeIdCounter: number = 400000;
 
-private static readonly POSITIONS_STORAGE_KEY = 'customGraphNodePositions';
-private static readonly FROZEN_STORAGE_KEY = 'customGraphFrozenTabs';
-private static readonly LINK_NODES_STORAGE_KEY = 'customGraphLinkNodes';
-private static readonly SPLIT_NODES_STORAGE_KEY = 'customGraphSplitNodes';
+// Combined link tracking
+private combinedLinkGroups: ICombinedLinkGroup[] = [];
+private combinedNodeIdCounter: number = 500000;
+private combinedEdgeIdCounter: number = 600000;
+
+// Shift-click multi-select tracking
+private shiftSelectedNodes: number[] = [];
+
+	private static readonly POSITIONS_STORAGE_KEY = 'customGraphNodePositions';
+	private static readonly FROZEN_STORAGE_KEY = 'customGraphFrozenTabs';
+	private static readonly LINK_NODES_STORAGE_KEY = 'customGraphLinkNodes';
+	private static readonly SPLIT_NODES_STORAGE_KEY = 'customGraphSplitNodes';
+	private static readonly COMBINED_LINKS_STORAGE_KEY = 'customGraphCombinedLinks';
 
 public constructor(private readonly $element: any, private readonly $scope: IScope, private readonly $timeout: ITimeoutService, private readonly $interval: IIntervalService) {}
 
@@ -258,14 +289,17 @@ return;
 }
 });
 
-this.network.fit();
-this.saveNodePositions();
-if (this.linkPairs.length > 0) {
-this.saveLinkNodes();
-}
-if (this.splitGroups.length > 0) {
-this.saveSplitNodes();
-}
+				this.network.fit();
+				this.saveNodePositions();
+				if (this.linkPairs.length > 0) {
+					this.saveLinkNodes();
+				}
+				if (this.splitGroups.length > 0) {
+					this.saveSplitNodes();
+				}
+				if (this.combinedLinkGroups.length > 0) {
+					this.saveCombinedLinks();
+				}
 });
 }
 
@@ -337,16 +371,19 @@ public toggleFreeze(): void
 this.frozen = !this.frozen;
 this.saveFrozenState();
 
-if (!this.frozen) {
-// Clear link nodes when unfreezing
-this.linkPairs = [];
-this.saveLinkNodesFromDescriptors([]);
-// Clear split nodes when unfreezing
-this.splitGroups = [];
-this.saveSplitNodesFromDescriptors([]);
-this.frozenResult = this.result;
-this.updateData(this.result);
-}
+		if (!this.frozen) {
+			// Clear link nodes when unfreezing
+			this.linkPairs = [];
+			this.saveLinkNodesFromDescriptors([]);
+			// Clear split nodes when unfreezing
+			this.splitGroups = [];
+			this.saveSplitNodesFromDescriptors([]);
+			// Clear combined links when unfreezing
+			this.combinedLinkGroups = [];
+			this.saveCombinedLinksFromDescriptors([]);
+			this.frozenResult = this.result;
+			this.updateData(this.result);
+		}
 }
 
 public updateData(result: ProductionResult|undefined): void
@@ -365,11 +402,15 @@ public useVis(result: ProductionResult): void
 this.linkPairs = [];
 this.linkNodeIdCounter = 100000;
 this.linkEdgeIdCounter = 200000;
-// Reset split tracking for fresh render
-this.splitGroups = [];
-this.splitNodeIdCounter = 300000;
-this.splitEdgeIdCounter = 400000;
-this.currentResult = result;
+		// Reset split tracking for fresh render
+		this.splitGroups = [];
+		this.splitNodeIdCounter = 300000;
+		this.splitEdgeIdCounter = 400000;
+		// Reset combined link tracking for fresh render
+		this.combinedLinkGroups = [];
+		this.combinedNodeIdCounter = 500000;
+		this.combinedEdgeIdCounter = 600000;
+		this.currentResult = result;
 
 const nodes = new DataSet<IVisNode>();
 const edges = new DataSet<IVisEdge>();
@@ -409,15 +450,18 @@ smooth: smooth,
 
 this.network = this.drawVisualisation(nodes, edges);
 
-this.network.on('dragEnd', () => {
-this.saveNodePositions();
-if (this.linkPairs.length > 0) {
-this.saveLinkNodes();
-}
-if (this.splitGroups.length > 0) {
-this.saveSplitNodes();
-}
-});
+		this.network.on('dragEnd', () => {
+			this.saveNodePositions();
+			if (this.linkPairs.length > 0) {
+				this.saveLinkNodes();
+			}
+			if (this.splitGroups.length > 0) {
+				this.saveSplitNodes();
+			}
+			if (this.combinedLinkGroups.length > 0) {
+				this.saveCombinedLinks();
+			}
+		});
 
 // Always run ELK layout first (exactly like Visualization)
 this.$timeout(0).then(() => {
@@ -490,8 +534,34 @@ this.network.fit();
 // Apply stored link nodes after layout/positions are set
 this.applyStoredLinks(nodes, edges, result, savedPositions);
 
-// Apply stored split nodes after layout/positions are set
-this.applyStoredSplits(nodes, edges, result);
+					// Apply stored split nodes after layout/positions are set
+					this.applyStoredSplits(nodes, edges, result);
+
+					// Apply stored combined links after layout/positions are set
+					this.applyStoredCombinedLinks(nodes, edges, result);
+
+// Register shift-click handler for multi-select
+this.network.on('click', (params: any) => {
+const isShift = params.event && params.event.srcEvent && params.event.srcEvent.shiftKey;
+if (isShift && params.nodes.length === 1) {
+const clickedNodeId = params.nodes[0] as number;
+const idx = this.shiftSelectedNodes.indexOf(clickedNodeId);
+if (idx !== -1) {
+// Already selected, deselect it
+this.shiftSelectedNodes.splice(idx, 1);
+} else {
+this.shiftSelectedNodes.push(clickedNodeId);
+}
+this.network.selectNodes(this.shiftSelectedNodes);
+} else if (!isShift) {
+// Clear shift selection on normal click
+if (params.nodes.length === 1) {
+this.shiftSelectedNodes = [params.nodes[0] as number];
+} else {
+this.shiftSelectedNodes = [];
+}
+}
+});
 
 // Register double-click handler for link node and split node creation/removal
 this.network.on('doubleClick', (params: any) => {
@@ -503,10 +573,24 @@ this.handleEdgeDoubleClick(params.edges[0], nodes, edges, result);
 }
 });
 
-// Save positions after layout
-this.$timeout(100).then(() => {
-this.saveNodePositions();
+// Register right-click handler for combining link nodes
+this.network.on('oncontext', (params: any) => {
+params.event.preventDefault();
+let selectedNodeIds = this.network.getSelectedNodes() as number[];
+// Fall back to shift-selected nodes if network selection is empty/single
+if (selectedNodeIds.length < 2 && this.shiftSelectedNodes.length >= 2) {
+selectedNodeIds = this.shiftSelectedNodes.slice();
+}
+if (selectedNodeIds.length >= 2) {
+this.handleCombineLinks(selectedNodeIds, nodes, edges, result);
+this.shiftSelectedNodes = [];
+}
 });
+
+					// Save positions after layout
+					this.$timeout(100).then(() => {
+						this.saveNodePositions();
+					});
 });
 });
 });
@@ -574,17 +658,24 @@ this.saveLinkNodes();
 this.saveNodePositions();
 }
 
-private handleNodeDoubleClick(nodeId: number, nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult, isShift: boolean = false): void
-{
-// Check if it's a split node being combined back
-const splitGroupIndex = this.splitGroups.findIndex((g) => g.splitNodeIds.indexOf(nodeId) !== -1);
-if (splitGroupIndex !== -1) {
-this.combineSplitGroup(splitGroupIndex, nodes, edges);
-return;
-}
+	private handleNodeDoubleClick(nodeId: number, nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult, isShift: boolean = false): void
+	{
+		// Check if it's a combined link node being uncombined
+		const combinedGroupIndex = this.combinedLinkGroups.findIndex((g) => g.combinedOutId === nodeId || g.combinedInId === nodeId);
+		if (combinedGroupIndex !== -1) {
+			this.uncombineCombinedGroup(combinedGroupIndex, nodes, edges, result);
+			return;
+		}
 
-// Check if it's a link node being removed
-const pairIndex = this.linkPairs.findIndex((p) => p.linkOutId === nodeId || p.linkInId === nodeId);
+		// Check if it's a split node being combined back
+		const splitGroupIndex = this.splitGroups.findIndex((g) => g.splitNodeIds.indexOf(nodeId) !== -1);
+		if (splitGroupIndex !== -1) {
+			this.combineSplitGroup(splitGroupIndex, nodes, edges);
+			return;
+		}
+
+		// Check if it's a link node being removed
+		const pairIndex = this.linkPairs.findIndex((p) => p.linkOutId === nodeId || p.linkInId === nodeId);
 if (pairIndex !== -1) {
 const pair = this.linkPairs[pairIndex];
 
@@ -787,7 +878,462 @@ this.linkPairs.push(pair);
 return pair;
 }
 
-private applyStoredLinks(nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult, savedPositions: {[key: string]: {x: number, y: number}}): void
+	// ==================== Combined Link Methods ====================
+
+	private handleCombineLinks(selectedNodeIds: number[], nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult): void
+	{
+		// Find which link pairs correspond to the selected nodes
+		const selectedOutPairs: ILinkPair[] = [];
+		const selectedInPairs: ILinkPair[] = [];
+
+		for (const nodeId of selectedNodeIds) {
+			const pair = this.linkPairs.find((p) => p.linkOutId === nodeId);
+			if (pair) {
+				selectedOutPairs.push(pair);
+				continue;
+			}
+			const inPair = this.linkPairs.find((p) => p.linkInId === nodeId);
+			if (inPair) {
+				selectedInPairs.push(inPair);
+			}
+		}
+
+		// Try to combine Link Out nodes
+		if (selectedOutPairs.length >= 2) {
+			this.tryCombinePairs(selectedOutPairs, 'out', nodes, edges, result);
+			return;
+		}
+
+		// Try to combine Link In nodes
+		if (selectedInPairs.length >= 2) {
+			this.tryCombinePairs(selectedInPairs, 'in', nodes, edges, result);
+			return;
+		}
+	}
+
+	private tryCombinePairs(pairs: ILinkPair[], type: 'out' | 'in', nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult): void
+	{
+		// Group by item and source key
+		// For OUT: group by itemClassName and toNodeKey (same destination)
+		// For IN: group by itemClassName and fromNodeKey (same source)
+		const groups: {[key: string]: ILinkPair[]} = {};
+
+		for (const pair of pairs) {
+			let groupKey: string;
+			if (type === 'out') {
+				groupKey = pair.descriptor.itemClassName + '||' + pair.descriptor.toNodeKey;
+			} else {
+				groupKey = pair.descriptor.itemClassName + '||' + pair.descriptor.fromNodeKey;
+			}
+			if (!groups[groupKey]) {
+				groups[groupKey] = [];
+			}
+			groups[groupKey].push(pair);
+		}
+
+		// Combine each group that has 2+ pairs
+		for (const key in groups) {
+			if (groups.hasOwnProperty(key) && groups[key].length >= 2) {
+				this.combineLinksGroup(groups[key], type, nodes, edges, result);
+			}
+		}
+	}
+
+	private combineLinksGroup(pairs: ILinkPair[], type: 'out' | 'in', nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult): void
+	{
+		const itemClassName = pairs[0].descriptor.itemClassName;
+		const itemName = model.getItem(itemClassName).prototype.name;
+		const sourceKey = type === 'out' ? pairs[0].descriptor.toNodeKey : pairs[0].descriptor.fromNodeKey;
+		const recipeCount = pairs.length;
+
+		// Gather edge data from each pair before removal
+		const pairEdgeData: {fromVisId: number, toVisId: number, outLabel: string, inLabel: string, amount: number}[] = [];
+		let totalAmount = 0;
+
+		for (const pair of pairs) {
+			const outEdge = edges.get(pair.outEdgeId) as any;
+			const inEdge = edges.get(pair.inEdgeId) as any;
+			if (!outEdge || !inEdge) {
+				continue;
+			}
+
+			const fromVisId = outEdge.from;
+			const toVisId = inEdge.to;
+
+			// Try to get amount from graph edge
+			let amount = 0;
+			const graphEdge = result.graph.edges.find((e) => {
+				return getNodeKey(e.from) === pair.descriptor.fromNodeKey
+					&& getNodeKey(e.to) === pair.descriptor.toNodeKey
+					&& e.itemAmount.item === pair.descriptor.itemClassName;
+			});
+			if (graphEdge) {
+				amount = graphEdge.itemAmount.amount;
+			}
+			totalAmount += amount;
+
+			pairEdgeData.push({
+				fromVisId: fromVisId,
+				toVisId: toVisId,
+				outLabel: outEdge.label || '',
+				inLabel: inEdge.label || '',
+				amount: amount,
+			});
+		}
+
+		if (pairEdgeData.length < 2) {
+			return;
+		}
+
+		// Get position of first pair's relevant node for placement
+		const firstPair = pairs[0];
+		let combinedOutPos: {x: number, y: number};
+		let combinedInPos: {x: number, y: number};
+
+		if (type === 'out') {
+			const outPos = this.network.getPositions([firstPair.linkOutId]);
+			const inPos = this.network.getPositions([firstPair.linkInId]);
+			combinedOutPos = outPos[firstPair.linkOutId] || {x: 0, y: 0};
+			combinedInPos = inPos[firstPair.linkInId] || {x: 0, y: 0};
+		} else {
+			const outPos = this.network.getPositions([firstPair.linkOutId]);
+			const inPos = this.network.getPositions([firstPair.linkInId]);
+			combinedOutPos = outPos[firstPair.linkOutId] || {x: 0, y: 0};
+			combinedInPos = inPos[firstPair.linkInId] || {x: 0, y: 0};
+		}
+
+		// Remove all the individual link pairs (nodes and edges)
+		const removedPairs: ILinkPair[] = [];
+		for (const pair of pairs) {
+			edges.remove(pair.outEdgeId);
+			edges.remove(pair.inEdgeId);
+			nodes.remove(pair.linkOutId);
+			nodes.remove(pair.linkInId);
+
+			// Remove from linkPairs tracking
+			const idx = this.linkPairs.indexOf(pair);
+			if (idx !== -1) {
+				this.linkPairs.splice(idx, 1);
+			}
+			removedPairs.push(pair);
+		}
+
+		// Determine labels
+		const amountStr = Strings.formatItemAmount(totalAmount, itemClassName);
+		let sourceName: string;
+
+		// Find the source display name from graph nodes
+		const sourceGraphNode = result.graph.nodes.find((n) => getNodeKey(n) === sourceKey);
+		sourceName = sourceGraphNode ? getNodeDisplayName(sourceGraphNode) : sourceKey;
+
+		let outLabel: string;
+		let inLabel: string;
+
+		if (type === 'out') {
+			// Selected were Link Out nodes with same "To" destination
+			outLabel = '<b>Link Out: ' + itemName + '</b>\n<i>To: ' + sourceName + '</i>\n' + amountStr;
+			inLabel = '<b>Link In: ' + itemName + '</b>\n<i>From: (' + recipeCount + ' recipes)</i>\n' + amountStr;
+		} else {
+			// Selected were Link In nodes with same "From" source
+			outLabel = '<b>Link Out: ' + itemName + '</b>\n<i>To: (' + recipeCount + ' recipes)</i>\n' + amountStr;
+			inLabel = '<b>Link In: ' + itemName + '</b>\n<i>From: ' + sourceName + '</i>\n' + amountStr;
+		}
+
+		// Create combined nodes
+		const combinedOutId = this.combinedNodeIdCounter++;
+		const combinedInId = this.combinedNodeIdCounter++;
+		const combinedEdgeIds: number[] = [];
+
+		nodes.add({
+			id: combinedOutId,
+			label: outLabel,
+			x: combinedOutPos.x,
+			y: combinedOutPos.y,
+			color: {
+				border: 'rgba(0, 0, 0, 0)',
+				background: 'rgba(50, 160, 160, 1)',
+				highlight: {
+					border: 'rgba(238, 238, 238, 1)',
+					background: 'rgba(80, 190, 190, 1)',
+				},
+			},
+			font: {
+				color: 'rgba(238, 238, 238, 1)',
+			},
+		});
+
+		nodes.add({
+			id: combinedInId,
+			label: inLabel,
+			x: combinedInPos.x,
+			y: combinedInPos.y,
+			color: {
+				border: 'rgba(0, 0, 0, 0)',
+				background: 'rgba(50, 160, 160, 1)',
+				highlight: {
+					border: 'rgba(238, 238, 238, 1)',
+					background: 'rgba(80, 190, 190, 1)',
+				},
+			},
+			font: {
+				color: 'rgba(238, 238, 238, 1)',
+			},
+		});
+
+		const linkEdgeColor = {
+			color: 'rgba(50, 160, 160, 0.8)',
+			highlight: 'rgba(80, 190, 190, 1)',
+		};
+		const linkEdgeFont = {
+			color: 'rgba(238, 238, 238, 1)',
+		};
+
+		if (type === 'out') {
+			// Multiple sources → combined Link Out node
+			for (const data of pairEdgeData) {
+				const edgeId = this.combinedEdgeIdCounter++;
+				combinedEdgeIds.push(edgeId);
+				edges.add({
+					id: edgeId,
+					from: data.fromVisId,
+					to: combinedOutId,
+					label: data.outLabel,
+					color: linkEdgeColor,
+					font: linkEdgeFont,
+				} as any);
+			}
+			// Combined Link In node → single target
+			const targetId = pairEdgeData[0].toVisId;
+			const inEdgeId = this.combinedEdgeIdCounter++;
+			combinedEdgeIds.push(inEdgeId);
+			edges.add({
+				id: inEdgeId,
+				from: combinedInId,
+				to: targetId,
+				label: itemName + '\n' + amountStr,
+				color: linkEdgeColor,
+				font: linkEdgeFont,
+			} as any);
+		} else {
+			// Single source → combined Link Out node
+			const sourceId = pairEdgeData[0].fromVisId;
+			const outEdgeId = this.combinedEdgeIdCounter++;
+			combinedEdgeIds.push(outEdgeId);
+			edges.add({
+				id: outEdgeId,
+				from: sourceId,
+				to: combinedOutId,
+				label: itemName + '\n' + amountStr,
+				color: linkEdgeColor,
+				font: linkEdgeFont,
+			} as any);
+			// Combined Link In node → multiple targets
+			for (const data of pairEdgeData) {
+				const edgeId = this.combinedEdgeIdCounter++;
+				combinedEdgeIds.push(edgeId);
+				edges.add({
+					id: edgeId,
+					from: combinedInId,
+					to: data.toVisId,
+					label: data.inLabel,
+					color: linkEdgeColor,
+					font: linkEdgeFont,
+				} as any);
+			}
+		}
+
+		const descriptor: ICombinedLinkDescriptor = {
+			type: type,
+			itemClassName: itemClassName,
+			sourceKey: sourceKey,
+			originalDescriptors: removedPairs.map((p) => ({...p.descriptor})),
+		};
+
+		const group: ICombinedLinkGroup = {
+			type: type,
+			itemClassName: itemClassName,
+			sourceKey: sourceKey,
+			originalPairs: removedPairs,
+			combinedOutId: combinedOutId,
+			combinedInId: combinedInId,
+			combinedEdgeIds: combinedEdgeIds,
+			descriptor: descriptor,
+		};
+
+		this.combinedLinkGroups.push(group);
+		this.network.unselectAll();
+		this.saveCombinedLinks();
+		this.saveLinkNodes();
+		this.saveNodePositions();
+	}
+
+	private uncombineCombinedGroup(groupIndex: number, nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult): void
+	{
+		const group = this.combinedLinkGroups[groupIndex];
+
+		// Remove combined edges
+		for (const edgeId of group.combinedEdgeIds) {
+			edges.remove(edgeId);
+		}
+
+		// Remove combined nodes
+		nodes.remove(group.combinedOutId);
+		nodes.remove(group.combinedInId);
+
+		// Recreate the individual link pairs
+		for (const originalPair of group.originalPairs) {
+			const desc = originalPair.descriptor;
+
+			// Find the matching graph edge
+			const graphEdge = result.graph.edges.find((e) => {
+				return getNodeKey(e.from) === desc.fromNodeKey
+					&& getNodeKey(e.to) === desc.toNodeKey
+					&& e.itemAmount.item === desc.itemClassName;
+			});
+
+			if (!graphEdge) {
+				// Restore original edge data if possible
+				if (originalPair.originalEdgeData) {
+					edges.add(originalPair.originalEdgeData);
+				}
+				continue;
+			}
+
+			const positions = this.network.getPositions([graphEdge.from.id, graphEdge.to.id]);
+			const fromPos = positions[graphEdge.from.id] || {x: 0, y: 0};
+			const toPos = positions[graphEdge.to.id] || {x: 0, y: 0};
+
+			// The original edge was already removed from the vis DataSet; we need to recreate it
+			// but createLinkPair expects it in the edges DataSet. Add it temporarily.
+			edges.add(originalPair.originalEdgeData);
+
+			const newPair = this.createLinkPair(
+				nodes, edges,
+				graphEdge.from.id, graphEdge.to.id,
+				originalPair.originalEdgeData, desc,
+				graphEdge.itemAmount.item, graphEdge.itemAmount.amount,
+				fromPos, toPos,
+				graphEdge.from, graphEdge.to,
+			);
+
+			// Restore saved positions if available
+			if (desc.linkOutPos) {
+				nodes.update({id: newPair.linkOutId, x: desc.linkOutPos.x, y: desc.linkOutPos.y});
+			}
+			if (desc.linkInPos) {
+				nodes.update({id: newPair.linkInId, x: desc.linkInPos.x, y: desc.linkInPos.y});
+			}
+		}
+
+		// Remove from tracking
+		this.combinedLinkGroups.splice(groupIndex, 1);
+
+		this.saveCombinedLinks();
+		this.saveLinkNodes();
+		this.saveNodePositions();
+	}
+
+	private applyStoredCombinedLinks(nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult): void
+	{
+		const descriptors = this.loadCombinedLinks();
+		if (descriptors.length === 0) {
+			return;
+		}
+
+		const appliedDescriptors: ICombinedLinkDescriptor[] = [];
+
+		for (const descriptor of descriptors) {
+			// Find the link pairs that match the original descriptors
+			const matchingPairs: ILinkPair[] = [];
+
+			for (const origDesc of descriptor.originalDescriptors) {
+				const pair = this.linkPairs.find((p) =>
+					p.descriptor.fromNodeKey === origDesc.fromNodeKey
+					&& p.descriptor.toNodeKey === origDesc.toNodeKey
+					&& p.descriptor.itemClassName === origDesc.itemClassName
+				);
+				if (pair) {
+					matchingPairs.push(pair);
+				}
+			}
+
+			if (matchingPairs.length < 2) {
+				continue;
+			}
+
+			// Combine them
+			this.combineLinksGroup(matchingPairs, descriptor.type, nodes, edges, result);
+
+			// Restore saved positions for the combined nodes
+			const group = this.combinedLinkGroups[this.combinedLinkGroups.length - 1];
+			if (group) {
+				if (descriptor.combinedOutPos) {
+					nodes.update({id: group.combinedOutId, x: descriptor.combinedOutPos.x, y: descriptor.combinedOutPos.y});
+				}
+				if (descriptor.combinedInPos) {
+					nodes.update({id: group.combinedInId, x: descriptor.combinedInPos.x, y: descriptor.combinedInPos.y});
+				}
+			}
+
+			appliedDescriptors.push(descriptor);
+		}
+
+		if (appliedDescriptors.length !== descriptors.length) {
+			this.saveCombinedLinksFromDescriptors(appliedDescriptors);
+		}
+	}
+
+	// ==================== Combined Link Persistence ====================
+
+	private saveCombinedLinks(): void
+	{
+		if (this.network) {
+			for (const group of this.combinedLinkGroups) {
+				const pos = this.network.getPositions([group.combinedOutId, group.combinedInId]);
+				if (pos[group.combinedOutId]) {
+					group.descriptor.combinedOutPos = pos[group.combinedOutId];
+				}
+				if (pos[group.combinedInId]) {
+					group.descriptor.combinedInPos = pos[group.combinedInId];
+				}
+			}
+		}
+		const descriptors = this.combinedLinkGroups.map((g) => g.descriptor);
+		this.saveCombinedLinksFromDescriptors(descriptors);
+	}
+
+	private saveCombinedLinksFromDescriptors(descriptors: ICombinedLinkDescriptor[]): void
+	{
+		try {
+			let allCombined: {[key: string]: ICombinedLinkDescriptor[]} = {};
+			const existing = localStorage.getItem(CustomGraphComponentController.COMBINED_LINKS_STORAGE_KEY);
+			if (existing) {
+				allCombined = JSON.parse(existing);
+			}
+			allCombined[this.tabId] = descriptors;
+			localStorage.setItem(CustomGraphComponentController.COMBINED_LINKS_STORAGE_KEY, JSON.stringify(allCombined));
+		} catch (e) {
+			// ignore
+		}
+	}
+
+	private loadCombinedLinks(): ICombinedLinkDescriptor[]
+	{
+		try {
+			const stored = localStorage.getItem(CustomGraphComponentController.COMBINED_LINKS_STORAGE_KEY);
+			if (stored) {
+				const allCombined = JSON.parse(stored);
+				if (allCombined[this.tabId]) {
+					return allCombined[this.tabId];
+				}
+			}
+		} catch (e) {
+			// ignore
+		}
+		return [];
+	}
+
+	private applyStoredLinks(nodes: DataSet<IVisNode>, edges: DataSet<IVisEdge>, result: ProductionResult, savedPositions: {[key: string]: {x: number, y: number}}): void
 {
 const descriptors = this.loadLinkNodes();
 if (descriptors.length === 0) {
@@ -1601,9 +2147,10 @@ layout: {
 improvedLayout: false,
 hierarchical: false,
 },
-interaction: {
-tooltipDelay: 0,
-},
+		interaction: {
+			tooltipDelay: 0,
+			multiselect: true,
+		},
 });
 }
 
