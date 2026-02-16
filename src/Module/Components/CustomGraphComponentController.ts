@@ -639,7 +639,7 @@ graphEdge.from, graphEdge.to,
 		// Link Out node (connected from source)
 		nodes.add({
 			id: linkOutId,
-			label: '<b>Link Out: ' + itemName + '</b>\n<i>From: ' + fromName + '</i>\n' + amountStr,
+			label: '<b>Link Out: ' + itemName + '</b>\n<i>To: ' + toName + '</i>\n' + amountStr,
 			x: midX - offset,
 			y: midY,
 			color: {
@@ -658,7 +658,7 @@ graphEdge.from, graphEdge.to,
 		// Link In node (connected to target)
 		nodes.add({
 			id: linkInId,
-			label: '<b>Link In: ' + itemName + '</b>\n<i>To: ' + toName + '</i>\n' + amountStr,
+			label: '<b>Link In: ' + itemName + '</b>\n<i>From: ' + fromName + '</i>\n' + amountStr,
 			x: midX + offset,
 			y: midY,
 			color: {
