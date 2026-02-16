@@ -36,6 +36,7 @@ import {ComponentOptionsService} from '@src/Module/Services/ComponentOptionsServ
 import {SchematicFiltersService} from '@src/Module/Services/SchematicFiltersService';
 import {SchematicFilterComponent} from '@src/Module/Components/SchematicFilterComponent';
 import {SchematicController} from '@src/Module/Controllers/SchematicController';
+import {ViewerController} from '@src/Module/Controllers/ViewerController';
 import {April} from '@src/Utils/April';
 
 export class AppModule
@@ -297,22 +298,38 @@ export class AppModule
 						},
 					},
 				},
-				{
-					name: 'production',
-					url: '/production',
-					parent: 'listing',
-					ncyBreadcrumb: {
-						label: 'Production',
-						parent: 'home',
-					},
-					views: {
-						'content@listing': {
-							controller: 'ProductionController',
-							controllerAs: 'ctrl',
-							template: require('@templates/Controllers/production.html'),
-						},
+			{
+				name: 'production',
+				url: '/production',
+				parent: 'listing',
+				ncyBreadcrumb: {
+					label: 'Production',
+					parent: 'home',
+				},
+				views: {
+					'content@listing': {
+						controller: 'ProductionController',
+						controllerAs: 'ctrl',
+						template: require('@templates/Controllers/production.html'),
 					},
 				},
+			},
+			{
+				name: 'viewer',
+				url: '/viewer',
+				parent: 'listing',
+				ncyBreadcrumb: {
+					label: 'Viewer',
+					parent: 'home',
+				},
+				views: {
+					'content@listing': {
+						controller: 'ViewerController',
+						controllerAs: 'ctrl',
+						template: require('@templates/Controllers/viewer.html'),
+					},
+				},
+			},
 			];
 			appStates.forEach((state) => {
 				$stateProvider.state(state);
@@ -409,6 +426,7 @@ this.app.component('customGraph', new CustomGraphComponent);
 		this.app.controller('BuildingController', BuildingController);
 		this.app.controller('SchematicController', SchematicController);
 		this.app.controller('ProductionController', ProductionController);
+		this.app.controller('ViewerController', ViewerController);
 	}
 
 	private static generateNumberFormattingFunction()

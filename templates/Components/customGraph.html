@@ -3,6 +3,13 @@
 <span class="fas fa-fw" ng-class="{'fa-lock': $ctrl.frozen, 'fa-unlock': !$ctrl.frozen}"></span>
 {{$ctrl.frozen ? 'Unfreeze Graph' : 'Freeze Graph'}}
 </button>
+<button class="btn btn-sm btn-outline-info ml-2" ng-click="$ctrl.exportGraph()">
+<span class="fas fa-fw fa-copy"></span>
+Export Graph JSON
+</button>
+<span ng-if="$ctrl.exportMessage" class="ml-2 text-success">
+<span class="fas fa-check"></span> {{$ctrl.exportMessage}}
+</span>
 <span ng-if="$ctrl.frozen" class="ml-2 text-warning">
 <span class="fas fa-info-circle"></span> Graph is frozen — solver input changes will not update this graph.
 </span>

@@ -36,13 +36,19 @@
 						</a>
 					</div>
 				</li>
-				<li class="nav-item" ui-sref-active="active">
-					<a class="nav-link" ui-sref="production">
-						<span class="fas fa-fw fa-chart-line"></span>
-						Calculator
-					</a>
-				</li>
-			</ul>
+			<li class="nav-item" ui-sref-active="active">
+				<a class="nav-link" ui-sref="production">
+					<span class="fas fa-fw fa-chart-line"></span>
+					Calculator
+				</a>
+			</li>
+			<li class="nav-item" ui-sref-active="active">
+				<a class="nav-link" ui-sref="viewer">
+					<span class="fas fa-fw fa-eye"></span>
+					Viewer
+				</a>
+			</li>
+		</ul>
 			<ul class="navbar-nav">
 				<li class="nav-item" ng-if="$root.aprilModePossible">
 					<a class="nav-link" ng-if="$root.aprilMode" ng-click="disable()">

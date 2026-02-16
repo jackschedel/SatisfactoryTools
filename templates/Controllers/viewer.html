@@ -1,0 +1,21 @@
+<div class="row mt-3">
+	<div class="col-12">
+		<h4>Graph Viewer</h4>
+		<p class="text-muted">Paste an exported graph JSON below and click "Load Graph" to display it.</p>
+	</div>
+</div>
+<div class="row">
+	<div class="col-12">
+		<div class="form-group">
+			<textarea class="form-control" rows="8" ng-model="ctrl.graphJson" placeholder='Paste graph JSON here...'></textarea>
+		</div>
+		<button class="btn btn-primary mr-2" ng-click="ctrl.loadGraph()">Load Graph</button>
+		<button class="btn btn-secondary" ng-click="ctrl.clearGraph()">Clear</button>
+		<div class="text-danger mt-2" ng-if="ctrl.errorMessage">{{ctrl.errorMessage}}</div>
+	</div>
+</div>
+<div class="row mt-3" ng-if="ctrl.graphData">
+	<div class="col-12">
+		<div class="viewer-graph-container" style="width: 100%; height: 600px; border: 1px solid #444;"></div>
+	</div>
+</div>

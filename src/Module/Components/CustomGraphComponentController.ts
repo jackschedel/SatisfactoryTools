@@ -89,9 +89,10 @@ function getNodeDisplayName(node: GraphNode): string
 export class CustomGraphComponentController implements IController
 {
 
-	public result: ProductionResult;
-	public tabId: string;
-	public frozen: boolean = false;
+public result: ProductionResult;
+public tabId: string;
+public frozen: boolean = false;
+public exportMessage: string = '';
 
 	public static $inject = ['$element', '$scope', '$timeout', '$interval'];
 
@@ -176,6 +177,69 @@ private static readonly LINK_NODES_STORAGE_KEY = 'customGraphLinkNodes';
 		this.unregisterTabIdWatcherCallback();
 		this.$interval.cancel(this.interval);
 	}
+
+public exportGraph(): void
+{
+if (!this.network || !this.nodesDataSet || !this.edgesDataSet) {
+return;
+}
+
+const positions = this.network.getPositions();
+const nodesExport: any[] = [];
+this.nodesDataSet.forEach((node: any) => {
+const pos = positions[node.id] || {x: 0, y: 0};
+nodesExport.push({
+id: node.id,
+label: node.label,
+x: pos.x,
+y: pos.y,
+color: node.color,
+font: node.font,
+});
+});
+
+const edgesExport: any[] = [];
+this.edgesDataSet.forEach((edge: any) => {
+edgesExport.push({
+id: edge.id,
+from: edge.from,
+to: edge.to,
+label: edge.label,
+color: edge.color,
+font: edge.font,
+smooth: edge.smooth,
+});
+});
+
+const exportData = {
+nodes: nodesExport,
+edges: edgesExport,
+};
+
+const json = JSON.stringify(exportData, null, 2);
+
+if (navigator.clipboard && navigator.clipboard.writeText) {
+navigator.clipboard.writeText(json).then(() => {
+this.$scope.$apply(() => {
+this.exportMessage = 'Copied to clipboard!';
+});
+this.$timeout(() => {
+this.exportMessage = '';
+}, 3000);
+});
+} else {
+const textarea = document.createElement('textarea');
+textarea.value = json;
+document.body.appendChild(textarea);
+textarea.select();
+document.execCommand('copy');
+document.body.removeChild(textarea);
+this.exportMessage = 'Copied to clipboard!';
+this.$timeout(() => {
+this.exportMessage = '';
+}, 3000);
+}
+}
 
 public toggleFreeze(): void
 {
