@@ -164,8 +164,11 @@ private combinedLinkGroups: ICombinedLinkGroup[] = [];
 private combinedNodeIdCounter: number = 500000;
 private combinedEdgeIdCounter: number = 600000;
 
-// Shift-click multi-select tracking
-private shiftSelectedNodes: number[] = [];
+	// Shift-click multi-select tracking
+	private shiftSelectedNodes: number[] = [];
+
+	// Mapping from numeric node ID to stable node key for position persistence
+	private nodeIdToKeyMap: {[id: number]: string} = {};
 
 	private static readonly POSITIONS_STORAGE_KEY = 'customGraphNodePositions';
 	private static readonly FROZEN_STORAGE_KEY = 'customGraphFrozenTabs';
@@ -417,9 +420,15 @@ const edges = new DataSet<IVisEdge>();
 this.nodesDataSet = nodes;
 this.edgesDataSet = edges;
 
-for (const node of result.graph.nodes) {
-nodes.add(node.getVisNode());
-}
+		// Build stable key map for position persistence
+		this.nodeIdToKeyMap = {};
+		for (const node of result.graph.nodes) {
+			this.nodeIdToKeyMap[node.id] = getNodeKey(node);
+		}
+
+		for (const node of result.graph.nodes) {
+			nodes.add(node.getVisNode());
+		}
 
 for (const edge of result.graph.edges) {
 const smooth: any = {
@@ -515,21 +524,22 @@ this.fitted = true;
 this.network.fit();
 }
 
-// After ELK layout, restore saved positions if frozen and they match
-const savedPositions = this.loadNodePositions();
-if (this.frozen && this.savedPositionsMatchGraph(savedPositions, result)) {
-nodes.forEach((node) => {
-const id = node.id;
-if (savedPositions[id]) {
-nodes.update({
-id: id,
-x: savedPositions[id].x,
-y: savedPositions[id].y,
-});
-}
-});
-this.network.fit();
-}
+				// After ELK layout, restore saved positions if frozen and they match
+				const savedPositions = this.loadNodePositions();
+				if (this.frozen && this.savedPositionsMatchGraph(savedPositions, result)) {
+					nodes.forEach((node) => {
+						const id = node.id;
+						const key = this.nodeIdToKeyMap[id];
+						if (key && savedPositions[key]) {
+							nodes.update({
+								id: id,
+								x: savedPositions[key].x,
+								y: savedPositions[key].y,
+							});
+						}
+					});
+					this.network.fit();
+				}
 
 						// Apply stored split nodes after layout/positions are set (before links, since links can be on split edges)
 						this.applyStoredSplits(nodes, edges, result);
@@ -2270,35 +2280,40 @@ private saveNodePositions(): void
 this.saveNodePositionsForTab(this.tabId);
 }
 
-private saveNodePositionsForTab(tabId: string): void
-{
-if (!this.network || !tabId) {
-return;
-}
-try {
-let allPositions: {[key: string]: any} = {};
-const existing = localStorage.getItem(CustomGraphComponentController.POSITIONS_STORAGE_KEY);
-if (existing) {
-allPositions = JSON.parse(existing);
-}
-// Get all positions and filter out link node IDs (>=100000) and split node IDs (>=300000) to keep storage clean
-const rawPositions = this.network.getPositions();
-const filteredPositions: {[key: string]: {x: number, y: number}} = {};
-for (const key in rawPositions) {
-if (rawPositions.hasOwnProperty(key) && parseInt(key, 10) < 100000) {
-filteredPositions[key] = rawPositions[key];
-}
-}
-allPositions[tabId] = filteredPositions;
-// Also save link node positions separately if links exist
-if (this.linkPairs.length > 0) {
-this.saveLinkNodePositions();
-}
-localStorage.setItem(CustomGraphComponentController.POSITIONS_STORAGE_KEY, JSON.stringify(allPositions));
-} catch (e) {
-// ignore storage errors
-}
-}
+	private saveNodePositionsForTab(tabId: string): void
+	{
+		if (!this.network || !tabId) {
+			return;
+		}
+		try {
+			let allPositions: {[key: string]: any} = {};
+			const existing = localStorage.getItem(CustomGraphComponentController.POSITIONS_STORAGE_KEY);
+			if (existing) {
+				allPositions = JSON.parse(existing);
+			}
+			// Get all positions and filter out link node IDs (>=100000) and split node IDs (>=300000) to keep storage clean
+			// Save using stable node keys instead of numeric IDs so positions survive reloads
+			const rawPositions = this.network.getPositions();
+			const filteredPositions: {[key: string]: {x: number, y: number}} = {};
+			for (const key in rawPositions) {
+				if (rawPositions.hasOwnProperty(key) && parseInt(key, 10) < 100000) {
+					const nodeId = parseInt(key, 10);
+					const stableKey = this.nodeIdToKeyMap[nodeId];
+					if (stableKey) {
+						filteredPositions[stableKey] = rawPositions[key];
+					}
+				}
+			}
+			allPositions[tabId] = filteredPositions;
+			// Also save link node positions separately if links exist
+			if (this.linkPairs.length > 0) {
+				this.saveLinkNodePositions();
+			}
+			localStorage.setItem(CustomGraphComponentController.POSITIONS_STORAGE_KEY, JSON.stringify(allPositions));
+		} catch (e) {
+			// ignore storage errors
+		}
+	}
 
 private loadNodePositions(): {[key: string]: {x: number, y: number}}
 {
@@ -2316,15 +2331,16 @@ return allPositions[this.tabId];
 return {};
 }
 
-private savedPositionsMatchGraph(savedPositions: {[key: string]: {x: number, y: number}}, result: ProductionResult): boolean
-{
-if (Object.keys(savedPositions).length === 0) {
-return false;
-}
-return result.graph.nodes.every((node) => {
-return savedPositions[node.id] !== undefined;
-});
-}
+	private savedPositionsMatchGraph(savedPositions: {[key: string]: {x: number, y: number}}, result: ProductionResult): boolean
+	{
+		if (Object.keys(savedPositions).length === 0) {
+			return false;
+		}
+		return result.graph.nodes.every((node) => {
+			const key = getNodeKey(node);
+			return savedPositions[key] !== undefined;
+		});
+	}
 
 private getGraphContainer(): HTMLElement
 {
