@@ -10,11 +10,13 @@ linkNodes?: ILinkNodeDescriptor[];
 
 export interface ILinkNodeDescriptor
 {
-fromNodeKey: string;
-toNodeKey: string;
-itemClassName: string;
-linkOutPos?: {x: number, y: number};
-linkInPos?: {x: number, y: number};
+	fromNodeKey: string;
+	toNodeKey: string;
+	itemClassName: string;
+	linkOutPos?: {x: number; y: number};
+	linkInPos?: {x: number; y: number};
+	splitRecipeKey?: string;
+	splitNodeIndex?: number;
 }
 
 export interface IProductionDataMetadata
