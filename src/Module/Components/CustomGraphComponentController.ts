@@ -28,12 +28,13 @@ import { RecipeData } from "@src/Tools/Production/Result/RecipeData";
 import { MachineGroup } from "@src/Tools/Production/Result/MachineGroup";
 
 interface ILinkPair {
-	linkOutId: number;
-	linkInId: number;
-	outEdgeId: number;
-	inEdgeId: number;
-	originalEdgeData: any;
-	descriptor: ILinkNodeDescriptor;
+linkOutId: number;
+linkInId: number;
+outEdgeId: number;
+inEdgeId: number;
+originalEdgeData: any;
+descriptor: ILinkNodeDescriptor;
+amount?: number;
 }
 
 interface ISplitDescriptor {
@@ -1773,14 +1774,15 @@ this.saveNodePositions();
 			},
 		} as any);
 
-		const pair: ILinkPair = {
-			linkOutId: linkOutId,
-			linkInId: linkInId,
-			outEdgeId: outEdgeId,
-			inEdgeId: inEdgeId,
-			originalEdgeData: originalEdgeData,
-			descriptor: descriptor,
-		};
+const pair: ILinkPair = {
+linkOutId: linkOutId,
+linkInId: linkInId,
+outEdgeId: outEdgeId,
+inEdgeId: inEdgeId,
+originalEdgeData: originalEdgeData,
+descriptor: descriptor,
+amount: itemAmount,
+};
 
 		this.linkPairs.push(pair);
 		return pair;
@@ -2051,19 +2053,24 @@ this.saveNodePositions();
 			const fromVisId = outEdge.from;
 			const toVisId = inEdge.to;
 
-			// Try to get amount from graph edge
-			let amount = 0;
-			const graphEdge = result.graph.edges.find((e) => {
-				return (
-					getNodeKey(e.from) === pair.descriptor.fromNodeKey &&
-					getNodeKey(e.to) === pair.descriptor.toNodeKey &&
-					e.itemAmount.item === pair.descriptor.itemClassName
-				);
-			});
-			if (graphEdge) {
-				amount = graphEdge.itemAmount.amount;
-			}
-			totalAmount += amount;
+// Get amount: prefer stored pair.amount (handles split-edge links with scaled amounts),
+// fall back to graph edge lookup for backward compatibility
+let amount = 0;
+if (pair.amount != null) {
+amount = pair.amount;
+} else {
+const graphEdge = result.graph.edges.find((e) => {
+return (
+getNodeKey(e.from) === pair.descriptor.fromNodeKey &&
+getNodeKey(e.to) === pair.descriptor.toNodeKey &&
+e.itemAmount.item === pair.descriptor.itemClassName
+);
+});
+if (graphEdge) {
+amount = graphEdge.itemAmount.amount;
+}
+}
+totalAmount += amount;
 
 			pairEdgeData.push({
 				fromVisId: fromVisId,
@@ -2292,69 +2299,92 @@ sourceKey: sourceKey,
 		nodes.remove(group.combinedOutId);
 		nodes.remove(group.combinedInId);
 
-		// Recreate the individual link pairs
-		for (const originalPair of group.originalPairs) {
-			const desc = originalPair.descriptor;
+// Recreate the individual link pairs
+for (const originalPair of group.originalPairs) {
+const desc = originalPair.descriptor;
 
-			// Find the matching graph edge
-			const graphEdge = result.graph.edges.find((e) => {
-				return (
-					getNodeKey(e.from) === desc.fromNodeKey &&
-					getNodeKey(e.to) === desc.toNodeKey &&
-					e.itemAmount.item === desc.itemClassName
-				);
-			});
+// Find the matching graph edge
+const graphEdge = result.graph.edges.find((e) => {
+return (
+getNodeKey(e.from) === desc.fromNodeKey &&
+getNodeKey(e.to) === desc.toNodeKey &&
+e.itemAmount.item === desc.itemClassName
+);
+});
 
-			if (!graphEdge) {
-				// Restore original edge data if possible
-				if (originalPair.originalEdgeData) {
-					edges.add(originalPair.originalEdgeData);
-				}
-				continue;
-			}
+if (!graphEdge) {
+// Restore original edge data if possible
+if (originalPair.originalEdgeData) {
+edges.add(originalPair.originalEdgeData);
+}
+continue;
+}
 
-			const positions = this.network.getPositions([
-				graphEdge.from.id,
-				graphEdge.to.id,
-			]);
-			const fromPos = positions[graphEdge.from.id] || { x: 0, y: 0 };
-			const toPos = positions[graphEdge.to.id] || { x: 0, y: 0 };
+// Handle split-edge links: the original recipe node doesn't exist in the vis DataSet,
+// so we need to find the split node and the vis edge connecting it.
+if (desc.splitRecipeKey != null && desc.splitNodeIndex != null) {
+// Restore the split edge into the DataSet first — it was consumed by createLinkPair
+// when the link was originally created, and combineLinksGroup didn't restore it.
+// applyStoredSplitEdgeLink expects to find the split edge in the DataSet.
+if (originalPair.originalEdgeData) {
+edges.add(originalPair.originalEdgeData);
+}
+const applied = this.applyStoredSplitEdgeLink(
+desc,
+graphEdge,
+nodes,
+edges,
+result,
+originalPair.amount,
+);
+if (!applied) {
+// applyStoredSplitEdgeLink failed; the edge we just restored stays as-is
+}
+continue;
+}
 
-			// The original edge was already removed from the vis DataSet; we need to recreate it
-			// but createLinkPair expects it in the edges DataSet. Add it temporarily.
-			edges.add(originalPair.originalEdgeData);
+const positions = this.network.getPositions([
+graphEdge.from.id,
+graphEdge.to.id,
+]);
+const fromPos = positions[graphEdge.from.id] || { x: 0, y: 0 };
+const toPos = positions[graphEdge.to.id] || { x: 0, y: 0 };
 
-			const newPair = this.createLinkPair(
-				nodes,
-				edges,
-				graphEdge.from.id,
-				graphEdge.to.id,
-				originalPair.originalEdgeData,
-				desc,
-				graphEdge.itemAmount.item,
-				graphEdge.itemAmount.amount,
-				fromPos,
-				toPos,
-				getNodeDisplayName(graphEdge.from),
-				getNodeDisplayName(graphEdge.to),
-			);
+// The original edge was already removed from the vis DataSet; we need to recreate it
+// but createLinkPair expects it in the edges DataSet. Add it temporarily.
+edges.add(originalPair.originalEdgeData);
 
-			// Restore saved positions if available
-			if (desc.linkOutPos) {
-				nodes.update({
-					id: newPair.linkOutId,
-					x: desc.linkOutPos.x,
-					y: desc.linkOutPos.y,
-				});
-			}
-			if (desc.linkInPos) {
-				nodes.update({
-					id: newPair.linkInId,
-					x: desc.linkInPos.x,
-					y: desc.linkInPos.y,
-				});
-			}
-		}
+const newPair = this.createLinkPair(
+nodes,
+edges,
+graphEdge.from.id,
+graphEdge.to.id,
+originalPair.originalEdgeData,
+desc,
+graphEdge.itemAmount.item,
+graphEdge.itemAmount.amount,
+fromPos,
+toPos,
+getNodeDisplayName(graphEdge.from),
+getNodeDisplayName(graphEdge.to),
+);
+
+// Restore saved positions if available
+if (desc.linkOutPos) {
+nodes.update({
+id: newPair.linkOutId,
+x: desc.linkOutPos.x,
+y: desc.linkOutPos.y,
+});
+}
+if (desc.linkInPos) {
+nodes.update({
+id: newPair.linkInId,
+x: desc.linkInPos.x,
+y: desc.linkInPos.y,
+});
+}
+}
 
 		// Remove from tracking
 		this.combinedLinkGroups.splice(groupIndex, 1);
@@ -2596,13 +2626,14 @@ result,
 		}
 	}
 
-	private applyStoredSplitEdgeLink(
-		descriptor: ILinkNodeDescriptor,
-		graphEdge: any,
-		nodes: DataSet<IVisNode>,
-		edges: DataSet<IVisEdge>,
-		result: ProductionResult,
-	): boolean {
+private applyStoredSplitEdgeLink(
+descriptor: ILinkNodeDescriptor,
+graphEdge: any,
+nodes: DataSet<IVisNode>,
+edges: DataSet<IVisEdge>,
+result: ProductionResult,
+overrideAmount?: number,
+): boolean {
 		// Find the split group by recipe key
 		const splitGroup = this.splitGroups.find(
 			(g) => g.descriptor.recipeNodeKey === descriptor.splitRecipeKey,
@@ -2691,23 +2722,45 @@ result,
 		const fromDisplayName = isSplitFrom ? splitName : otherName;
 		const toDisplayName = isSplitFrom ? otherName : splitName;
 
-		const pair = this.createLinkPair(
-			nodes,
-			edges,
-			fromNodeId,
-			toNodeId,
-			visEdge,
-			descriptor,
-			graphEdge.itemAmount.item,
-			graphEdge.itemAmount.amount,
-			fromPos,
-			toPos,
-			fromDisplayName,
-			toDisplayName,
-		);
+// Determine the correct amount for this split-edge link.
+// Use overrideAmount if provided (from uncombine), otherwise compute fraction.
+let linkAmount = graphEdge.itemAmount.amount;
+if (overrideAmount != null) {
+linkAmount = overrideAmount;
+} else {
+// Compute fraction based on how the split was done
+const splitItemClassName = splitGroup.descriptor.splitItemClassName;
+const isOutputSplit = splitGroup.descriptor.splitType === "output";
+if (splitItemClassName) {
+const splitItemEdges = result.graph.edges.filter((e: any) =>
+(isOutputSplit ? e.from.id : e.to.id) === splitGroup.originalNodeId &&
+e.itemAmount.item === splitItemClassName,
+);
+const totalSplitAmount = splitItemEdges.reduce((sum: number, e: any) => sum + e.itemAmount.amount, 0);
+if (totalSplitAmount > 0 && splitNodeIndex < splitItemEdges.length) {
+const fraction = splitItemEdges[splitNodeIndex].itemAmount.amount / totalSplitAmount;
+linkAmount = graphEdge.itemAmount.amount * fraction;
+}
+}
+}
 
-		// Restore saved positions for link nodes
-		if (descriptor.linkOutPos) {
+const pair = this.createLinkPair(
+nodes,
+edges,
+fromNodeId,
+toNodeId,
+visEdge,
+descriptor,
+graphEdge.itemAmount.item,
+linkAmount,
+fromPos,
+toPos,
+fromDisplayName,
+toDisplayName,
+);
+
+// Restore saved positions for link nodes
+if (descriptor.linkOutPos) {
 			nodes.update({
 				id: pair.linkOutId,
 				x: descriptor.linkOutPos.x,
@@ -2805,13 +2858,64 @@ result,
 			return;
 		}
 
-		// Check this node isn't already part of a split group
-		if (this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
-			return;
-		}
+    // Check this node isn't already part of a split group
+    if (this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
+      return;
+    }
 
-		// Gather all vis edges connected to this node
-		const allVisEdges = this.getVisEdgesForNode(nodeId, edges);
+    // Before gathering vis edges, restore any link pairs (and combined link groups)
+    // connected to this recipe node back to original edges. Link pairs replace the
+    // original vis edges with link nodes/edges, which breaks split logic because:
+    // 1) Link edge IDs don't match graph edge IDs, so scaling lookups fail.
+    // 2) Original vis edges used to identify primary split edges are missing.
+    const recipeKey = getNodeKey(recipeNode);
+
+    // First, uncombine any combined link groups that involve this recipe node
+    for (let i = this.combinedLinkGroups.length - 1; i >= 0; i--) {
+      const group = this.combinedLinkGroups[i];
+      const involvesRecipe = group.originalPairs.some(
+        (p) =>
+          p.descriptor.fromNodeKey === recipeKey ||
+          p.descriptor.toNodeKey === recipeKey,
+      );
+      if (involvesRecipe) {
+        this.uncombineCombinedGroup(i, nodes, edges, result);
+      }
+    }
+
+    // Then, remove any link pairs connected to this recipe node, saving their info for recreation
+    interface IRemovedLinkInfo {
+      descriptor: ILinkNodeDescriptor;
+      linkOutPos?: { x: number; y: number };
+      linkInPos?: { x: number; y: number };
+    }
+    const removedLinkInfos: IRemovedLinkInfo[] = [];
+
+    for (let i = this.linkPairs.length - 1; i >= 0; i--) {
+      const pair = this.linkPairs[i];
+      if (
+        pair.descriptor.fromNodeKey === recipeKey ||
+        pair.descriptor.toNodeKey === recipeKey
+      ) {
+        // Save info for recreation after split
+        const linkPositions = this.network.getPositions([pair.linkOutId, pair.linkInId]);
+        removedLinkInfos.push({
+          descriptor: { ...pair.descriptor },
+          linkOutPos: linkPositions[pair.linkOutId],
+          linkInPos: linkPositions[pair.linkInId],
+        });
+
+        edges.remove(pair.outEdgeId);
+        edges.remove(pair.inEdgeId);
+        nodes.remove(pair.linkOutId);
+        nodes.remove(pair.linkInId);
+        edges.add(pair.originalEdgeData);
+        this.linkPairs.splice(i, 1);
+      }
+    }
+
+    // Gather all vis edges connected to this node
+    const allVisEdges = this.getVisEdgesForNode(nodeId, edges);
 
 		// Categorize vis edges into: primary split edges, other same-direction edges, opposite-direction edges
 		const splitItemVisEdgeIds = new Set(splitEdges.map((e) => e.id));
@@ -2841,8 +2945,7 @@ result,
 		const positions = this.network.getPositions([nodeId]);
 		const originalPos = positions[nodeId] || { x: 0, y: 0 };
 
-		const recipeKey = getNodeKey(recipeNode);
-		const descriptor: ISplitDescriptor = {
+    const descriptor: ISplitDescriptor = {
 			recipeNodeKey: recipeKey,
 			splitType: splitType,
 			splitItemClassName: itemToSplit,
@@ -2870,20 +2973,22 @@ result,
 		// Remove the original node
 		nodes.remove(nodeId);
 
-		// Create one split node per primary edge
-		for (let i = 0; i < visPrimaryEdges.length; i++) {
-			const primaryEdge = visPrimaryEdges[i];
-			const splitNodeId = this.splitNodeIdCounter++;
-			splitNodeIds.push(splitNodeId);
+// Create one split node per primary edge
+const splitFractions: number[] = [];
+for (let i = 0; i < visPrimaryEdges.length; i++) {
+const primaryEdge = visPrimaryEdges[i];
+const splitNodeId = this.splitNodeIdCounter++;
+splitNodeIds.push(splitNodeId);
 
-			const offsetY = (i - (visPrimaryEdges.length - 1) / 2) * 120;
+const offsetY = (i - (visPrimaryEdges.length - 1) / 2) * 120;
 
-			// Calculate proportional machine amount based on edge flow
-			const graphEdge = visEdgeToGraphEdge[primaryEdge.id];
-			const fraction =
-				graphEdge && totalAmount > 0
-					? graphEdge.itemAmount.amount / totalAmount
-					: 1 / visPrimaryEdges.length;
+// Calculate proportional machine amount based on edge flow
+const graphEdge = visEdgeToGraphEdge[primaryEdge.id];
+const fraction =
+graphEdge && totalAmount > 0
+? graphEdge.itemAmount.amount / totalAmount
+: 1 / visPrimaryEdges.length;
+splitFractions.push(fraction);
 			const splitAmount = recipeNode.recipeData.amount * fraction;
 
 			// Create split node with label and tooltip
@@ -2979,10 +3084,179 @@ result,
 			descriptor: descriptor,
 		};
 
-		this.splitGroups.push(group);
-		this.saveSplitNodes();
-		this.saveNodePositions();
-	}
+    this.splitGroups.push(group);
+
+    // Recreate link pairs on split edges for previously-linked edges
+    if (removedLinkInfos.length > 0) {
+      this.recreateLinksOnSplitEdges(
+        removedLinkInfos,
+        group,
+        splitFractions,
+        visPrimaryEdges,
+        itemToSplit!,
+        isOutput,
+        nodes,
+        edges,
+        result,
+        recipeKey,
+      );
+    }
+
+    this.saveSplitNodes();
+    this.saveLinkNodes();
+    this.saveCombinedLinks();
+    this.saveNodePositions();
+  }
+
+  /**
+   * After splitting a recipe, recreate any link pairs that existed on the original
+   * recipe's edges onto the resulting split edges. Non-primary links (not on the
+   * split item or in the opposite direction) get individual link pairs per split
+   * node and are auto-combined into a single link-out/link-in node pair.
+   */
+  private recreateLinksOnSplitEdges(
+    removedLinkInfos: { descriptor: ILinkNodeDescriptor; linkOutPos?: { x: number; y: number }; linkInPos?: { x: number; y: number } }[],
+    group: ISplitGroup,
+    splitFractions: number[],
+    visPrimaryEdges: any[],
+    splitItem: string,
+    isOutput: boolean,
+    nodes: DataSet<IVisNode>,
+    edges: DataSet<IVisEdge>,
+    result: ProductionResult,
+    recipeKey: string,
+  ): void {
+    for (const info of removedLinkInfos) {
+      const isFromRecipe = info.descriptor.fromNodeKey === recipeKey;
+      const isInSplitDirection = isOutput ? isFromRecipe : !isFromRecipe;
+      const isOnSplitItem = info.descriptor.itemClassName === splitItem;
+
+      const otherKey = isFromRecipe ? info.descriptor.toNodeKey : info.descriptor.fromNodeKey;
+      const otherGraphNode = result.graph.nodes.find((n) => getNodeKey(n) === otherKey);
+      if (!otherGraphNode) { continue; }
+
+      const graphEdge = result.graph.edges.find((e) =>
+        getNodeKey(e.from) === info.descriptor.fromNodeKey &&
+        getNodeKey(e.to) === info.descriptor.toNodeKey &&
+        e.itemAmount.item === info.descriptor.itemClassName,
+      );
+      if (!graphEdge) { continue; }
+
+      const recreatedPairs: ILinkPair[] = [];
+
+      for (let si = 0; si < group.splitNodeIds.length; si++) {
+        const splitNodeId = group.splitNodeIds[si];
+
+        // For primary-direction split-item links, only the matching split node applies
+        if (isInSplitDirection && isOnSplitItem) {
+          // Check if this split node's primary edge connects to the right target
+          const pe = visPrimaryEdges[si];
+          const peTarget = isOutput ? pe.to : pe.from;
+          if (peTarget !== otherGraphNode.id) { continue; }
+        }
+
+        const fraction = splitFractions[si];
+        const scaledAmount = graphEdge.itemAmount.amount * fraction;
+
+        // Find the split edge connecting this split node to/from the other node
+        const splitEdge = this.findSplitEdgeForLink(
+          splitNodeId, otherGraphNode.id, isFromRecipe,
+          info.descriptor.itemClassName, group, edges,
+        );
+        if (!splitEdge) { continue; }
+
+        const fromId = isFromRecipe ? splitNodeId : otherGraphNode.id;
+        const toId = isFromRecipe ? otherGraphNode.id : splitNodeId;
+        const posMap = this.network.getPositions([fromId, toId]);
+        const fromPos = posMap[fromId] || { x: 0, y: 0 };
+        const toPos = posMap[toId] || { x: 0, y: 0 };
+
+        const splitNodeData = nodes.get(splitNodeId);
+        const splitName = splitNodeData
+          ? ((splitNodeData.label || "") as string).replace(/<[^>]*>/g, "").split("\n")[0].trim() || "Split Node"
+          : "Split Node";
+        const otherName = getNodeDisplayName(otherGraphNode);
+
+        const newDesc: ILinkNodeDescriptor = {
+          fromNodeKey: info.descriptor.fromNodeKey,
+          toNodeKey: info.descriptor.toNodeKey,
+          itemClassName: info.descriptor.itemClassName,
+          splitRecipeKey: recipeKey,
+          splitNodeIndex: si,
+        };
+
+        const pair = this.createLinkPair(
+          nodes, edges,
+          fromId, toId,
+          splitEdge, newDesc,
+          info.descriptor.itemClassName,
+          scaledAmount,
+          fromPos, toPos,
+          isFromRecipe ? splitName : otherName,
+          isFromRecipe ? otherName : splitName,
+        );
+
+        recreatedPairs.push(pair);
+      }
+
+      if (recreatedPairs.length >= 2) {
+        // Auto-combine: output links → "out" type (multiple split sources → one dest),
+        // input links → "in" type (one source → multiple split destinations)
+        const combineType: "out" | "in" = isFromRecipe ? "out" : "in";
+        this.combineLinksGroup(recreatedPairs, combineType, nodes, edges, result);
+
+        // Restore original link positions on the combined nodes
+        const lastGroup = this.combinedLinkGroups[this.combinedLinkGroups.length - 1];
+        if (lastGroup && info.linkOutPos) {
+          nodes.update({ id: lastGroup.combinedOutId, x: info.linkOutPos.x, y: info.linkOutPos.y });
+        }
+        if (lastGroup && info.linkInPos) {
+          nodes.update({ id: lastGroup.combinedInId, x: info.linkInPos.x, y: info.linkInPos.y });
+        }
+      } else if (recreatedPairs.length === 1) {
+        // Single link pair — restore positions
+        if (info.linkOutPos) {
+          nodes.update({ id: recreatedPairs[0].linkOutId, x: info.linkOutPos.x, y: info.linkOutPos.y });
+        }
+        if (info.linkInPos) {
+          nodes.update({ id: recreatedPairs[0].linkInId, x: info.linkInPos.x, y: info.linkInPos.y });
+        }
+      }
+    }
+  }
+
+  /**
+   * Find a split edge connecting a split node to/from the other node for a specific item.
+   */
+  private findSplitEdgeForLink(
+    splitNodeId: number,
+    otherNodeId: number,
+    isFromRecipe: boolean,
+    itemClassName: string,
+    group: ISplitGroup,
+    edges: DataSet<IVisEdge>,
+  ): any | null {
+    const matchingSplitEdges = group.splitEdgeIds
+      .map((eid) => edges.get(eid) as any)
+      .filter((e: any) => e != null)
+      .filter((e: any) => {
+        if (isFromRecipe) {
+          return e.from === splitNodeId && e.to === otherNodeId;
+        } else {
+          return e.from === otherNodeId && e.to === splitNodeId;
+        }
+      });
+
+    if (matchingSplitEdges.length === 1) { return matchingSplitEdges[0]; }
+    if (matchingSplitEdges.length > 1) {
+      const itemName = model.getItem(itemClassName).prototype.name;
+      return matchingSplitEdges.find((e: any) => {
+        const label = ((e.label || "") as string).split("\n")[0].trim();
+        return label === itemName;
+      }) || matchingSplitEdges[0];
+    }
+    return null;
+  }
 
 	/**
 	 * Build hover tooltip element for a split node, matching RecipeNode.getTooltip() format.
@@ -3093,52 +3367,124 @@ result,
 		};
 	}
 
-	private combineSplitGroup(
-		groupIndex: number,
-		nodes: DataSet<IVisNode>,
-		edges: DataSet<IVisEdge>,
-	): void {
-		const group = this.splitGroups[groupIndex];
+private combineSplitGroup(
+groupIndex: number,
+nodes: DataSet<IVisNode>,
+edges: DataSet<IVisEdge>,
+): void {
+const group = this.splitGroups[groupIndex];
 
-		// Remove any link pairs that are attached to split nodes in this group
-		for (let i = this.linkPairs.length - 1; i >= 0; i--) {
-			const pair = this.linkPairs[i];
-			if (pair.descriptor.splitRecipeKey === group.descriptor.recipeNodeKey) {
-				// This link pair is on a split edge of this group — remove it
-				edges.remove(pair.outEdgeId);
-				edges.remove(pair.inEdgeId);
-				nodes.remove(pair.linkOutId);
-				nodes.remove(pair.linkInId);
-				// Restore the original split edge so it can be cleaned up below
-				edges.add(pair.originalEdgeData);
-				this.linkPairs.splice(i, 1);
-			}
-		}
+// Remove any combined link groups that contain split-edge link pairs from this group
+for (let i = this.combinedLinkGroups.length - 1; i >= 0; i--) {
+const cg = this.combinedLinkGroups[i];
+const hasSplitPairs = cg.originalPairs.some(
+(p) => p.descriptor.splitRecipeKey === group.descriptor.recipeNodeKey,
+);
+if (hasSplitPairs) {
+for (const edgeId of cg.combinedEdgeIds) {
+edges.remove(edgeId);
+}
+nodes.remove(cg.combinedOutId);
+nodes.remove(cg.combinedInId);
+this.combinedLinkGroups.splice(i, 1);
+}
+}
 
-		// Remove all split edges
-		for (const edgeId of group.splitEdgeIds) {
-			edges.remove(edgeId);
-		}
+// Remove any link pairs that are attached to split nodes in this group
+// Collect descriptors of removed links so we can restore them on the original node
+const restoredLinkDescriptors: { descriptor: ILinkNodeDescriptor; linkOutPos?: { x: number; y: number }; linkInPos?: { x: number; y: number } }[] = [];
+for (let i = this.linkPairs.length - 1; i >= 0; i--) {
+const pair = this.linkPairs[i];
+if (pair.descriptor.splitRecipeKey === group.descriptor.recipeNodeKey) {
+// Save link positions and descriptor for restoring after recombine
+const linkPositions = this.network.getPositions([pair.linkOutId, pair.linkInId]);
+restoredLinkDescriptors.push({
+descriptor: {
+  fromNodeKey: pair.descriptor.fromNodeKey,
+  toNodeKey: pair.descriptor.toNodeKey,
+  itemClassName: pair.descriptor.itemClassName,
+  // Strip split-specific fields so it's restored as a normal link
+},
+linkOutPos: linkPositions[pair.linkOutId],
+linkInPos: linkPositions[pair.linkInId],
+});
+// This link pair is on a split edge of this group — remove it
+edges.remove(pair.outEdgeId);
+edges.remove(pair.inEdgeId);
+nodes.remove(pair.linkOutId);
+nodes.remove(pair.linkInId);
+// Restore the original split edge so it can be cleaned up below
+edges.add(pair.originalEdgeData);
+this.linkPairs.splice(i, 1);
+}
+}
 
-		// Remove all split nodes
-		for (const nodeId of group.splitNodeIds) {
-			nodes.remove(nodeId);
-		}
+// Remove all split edges
+for (const edgeId of group.splitEdgeIds) {
+edges.remove(edgeId);
+}
 
-		// Restore original node
-		nodes.add(group.originalNodeData);
+// Remove all split nodes
+for (const nodeId of group.splitNodeIds) {
+nodes.remove(nodeId);
+}
 
-		// Restore original edges
-		for (const edgeData of group.originalEdgesData) {
-			edges.add(edgeData);
-		}
+// Restore original node
+nodes.add(group.originalNodeData);
 
-		// Remove from tracking
-		this.splitGroups.splice(groupIndex, 1);
+// Restore original edges
+for (const edgeData of group.originalEdgesData) {
+edges.add(edgeData);
+}
 
-		this.saveSplitNodes();
-		this.saveNodePositions();
-	}
+// Remove from tracking
+this.splitGroups.splice(groupIndex, 1);
+
+// Restore link pairs that existed before the split (deduplicated by descriptor)
+if (restoredLinkDescriptors.length > 0 && this.currentResult) {
+const seen = new Set<string>();
+for (const info of restoredLinkDescriptors) {
+const key = info.descriptor.fromNodeKey + "||" + info.descriptor.toNodeKey + "||" + info.descriptor.itemClassName;
+if (seen.has(key)) { continue; }
+seen.add(key);
+
+const graphEdge = this.currentResult.graph.edges.find((e) =>
+  getNodeKey(e.from) === info.descriptor.fromNodeKey &&
+  getNodeKey(e.to) === info.descriptor.toNodeKey &&
+  e.itemAmount.item === info.descriptor.itemClassName,
+);
+if (!graphEdge) { continue; }
+const visEdge = edges.get(graphEdge.id);
+if (!visEdge) { continue; }
+
+const positions = this.network.getPositions([graphEdge.from.id, graphEdge.to.id]);
+const fromPos = positions[graphEdge.from.id];
+const toPos = positions[graphEdge.to.id];
+if (!fromPos || !toPos) { continue; }
+
+const pair = this.createLinkPair(
+  nodes, edges,
+  graphEdge.from.id, graphEdge.to.id,
+  visEdge, info.descriptor,
+  graphEdge.itemAmount.item, graphEdge.itemAmount.amount,
+  fromPos, toPos,
+  getNodeDisplayName(graphEdge.from), getNodeDisplayName(graphEdge.to),
+);
+
+if (info.linkOutPos) {
+  nodes.update({ id: pair.linkOutId, x: info.linkOutPos.x, y: info.linkOutPos.y });
+}
+if (info.linkInPos) {
+  nodes.update({ id: pair.linkInId, x: info.linkInPos.x, y: info.linkInPos.y });
+}
+}
+}
+
+this.saveSplitNodes();
+this.saveLinkNodes();
+this.saveCombinedLinks();
+this.saveNodePositions();
+}
 
 	private getVisEdgesForNode(nodeId: number, edges: DataSet<IVisEdge>): any[] {
 		return edges.get().filter((e: any) => e.from === nodeId || e.to === nodeId);
