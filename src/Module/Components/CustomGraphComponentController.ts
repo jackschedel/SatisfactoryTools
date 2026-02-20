@@ -876,30 +876,45 @@ export class CustomGraphComponentController implements IController {
 			const combinedGroupIndex = this.combinedLinkGroups.findIndex(
 				(g) => g.combinedOutId === nodeId || g.combinedInId === nodeId,
 			);
-			if (combinedGroupIndex !== -1) {
-				// Allow uncombine when single-select, or when the only selected nodes
-				// are both ends of the same combined link group.
-				const combinedGroup = this.combinedLinkGroups[combinedGroupIndex];
-				const isBothEndsSelected =
-					selectedNodeIds.length === 2 &&
-					selectedNodeIds.indexOf(combinedGroup.combinedOutId) !== -1 &&
-					selectedNodeIds.indexOf(combinedGroup.combinedInId) !== -1;
-				if (!isMultiSelect || isBothEndsSelected) {
-					items.push({
-						label: "Uncombine Link Nodes",
-						icon: "fa-expand-arrows-alt",
-						action: () => {
-							this.hideContextMenu();
-							this.uncombineCombinedGroup(
-								combinedGroupIndex,
-								nodes,
-								edges,
-								result,
-							);
-						},
-					});
-				}
-			}
+    if (combinedGroupIndex !== -1) {
+      // Allow uncombine when single-select, or when the only selected nodes
+      // are both ends of the same combined link group.
+      const combinedGroup = this.combinedLinkGroups[combinedGroupIndex];
+      const isBothEndsSelected =
+        selectedNodeIds.length === 2 &&
+        selectedNodeIds.indexOf(combinedGroup.combinedOutId) !== -1 &&
+        selectedNodeIds.indexOf(combinedGroup.combinedInId) !== -1;
+
+      // "Go to Other Side" — navigate viewport to the paired combined link node
+      const isCombinedOutSide = combinedGroup.combinedOutId === nodeId;
+      const otherCombinedNodeId = isCombinedOutSide
+        ? combinedGroup.combinedInId
+        : combinedGroup.combinedOutId;
+      items.push({
+        label: isCombinedOutSide ? "Go to Link In" : "Go to Link Out",
+        icon: "fa-crosshairs",
+        action: () => {
+          this.hideContextMenu();
+          this.moveViewportToNode(otherCombinedNodeId);
+        },
+      });
+
+      if (!isMultiSelect || isBothEndsSelected) {
+        items.push({
+          label: "Uncombine Link Nodes",
+          icon: "fa-expand-arrows-alt",
+          action: () => {
+            this.hideContextMenu();
+            this.uncombineCombinedGroup(
+              combinedGroupIndex,
+              nodes,
+              edges,
+              result,
+            );
+          },
+        });
+      }
+    }
 
 			// Check if it's a split node
 			const splitGroupIndex = this.splitGroups.findIndex(
@@ -920,27 +935,39 @@ export class CustomGraphComponentController implements IController {
 			const pairIndex = this.linkPairs.findIndex(
 				(p) => p.linkOutId === nodeId || p.linkInId === nodeId,
 			);
-			if (pairIndex !== -1) {
-				// Only show "Recombine Link" when a single link node is selected,
-				// or when exactly the 2 ends of the same link pair are selected.
-				const pair = this.linkPairs[pairIndex];
-				const isSingleSelect = selectedNodeIds.length <= 1;
-				const isSamePairBothEnds =
-					selectedNodeIds.length === 2 &&
-					selectedNodeIds.indexOf(pair.linkOutId) !== -1 &&
-					selectedNodeIds.indexOf(pair.linkInId) !== -1;
+      if (pairIndex !== -1) {
+        // Only show "Recombine Link" when a single link node is selected,
+        // or when exactly the 2 ends of the same link pair are selected.
+        const pair = this.linkPairs[pairIndex];
+        const isSingleSelect = selectedNodeIds.length <= 1;
+        const isSamePairBothEnds =
+          selectedNodeIds.length === 2 &&
+          selectedNodeIds.indexOf(pair.linkOutId) !== -1 &&
+          selectedNodeIds.indexOf(pair.linkInId) !== -1;
 
-				if (isSingleSelect || isSamePairBothEnds) {
-					items.push({
-						label: "Recombine Link",
-						icon: "fa-unlink",
-						action: () => {
-							this.hideContextMenu();
-							this.removeLinkPair(pairIndex, nodes, edges);
-						},
-					});
-				}
-			}
+        // "Go to Other Side" — navigate viewport to the paired link node
+        const isOutSide = pair.linkOutId === nodeId;
+        const otherLinkNodeId = isOutSide ? pair.linkInId : pair.linkOutId;
+        items.push({
+          label: isOutSide ? "Go to Link In" : "Go to Link Out",
+          icon: "fa-crosshairs",
+          action: () => {
+            this.hideContextMenu();
+            this.moveViewportToNode(otherLinkNodeId);
+          },
+        });
+
+        if (isSingleSelect || isSamePairBothEnds) {
+          items.push({
+            label: "Recombine Link",
+            icon: "fa-unlink",
+            action: () => {
+              this.hideContextMenu();
+              this.removeLinkPair(pairIndex, nodes, edges);
+            },
+          });
+        }
+      }
 
 			// Check if it's a RecipeNode (only when single-select)
 			const graphNode = result.graph.nodes.find((n) => n.id === nodeId);
@@ -1200,14 +1227,40 @@ export class CustomGraphComponentController implements IController {
 		this.$scope.$apply();
 	}
 
-	private hideContextMenu(): void {
-		if (this.contextMenu.visible) {
-			this.contextMenu.visible = false;
-			this.contextMenu.items = [];
-		}
-	}
+private hideContextMenu(): void {
+if (this.contextMenu.visible) {
+this.contextMenu.visible = false;
+this.contextMenu.items = [];
+}
+}
 
-	private removeLinkPair(
+/**
+ * Move the viewport to center on a specific node, keeping the current zoom level.
+ * Also selects the target node so it's highlighted.
+ */
+private moveViewportToNode(nodeId: number): void {
+if (!this.network) {
+return;
+}
+const positions = this.network.getPositions([nodeId]);
+const pos = positions[nodeId];
+if (!pos) {
+return;
+}
+const currentScale = this.network.getScale();
+this.network.moveTo({
+position: { x: pos.x, y: pos.y },
+scale: currentScale,
+animation: {
+duration: 500,
+easingFunction: "easeInOutQuad",
+},
+});
+this.network.setSelection({ nodes: [nodeId], edges: [] });
+this.multiSelectedNodes = [nodeId];
+}
+
+private removeLinkPair(
 		pairIndex: number,
 		nodes: DataSet<IVisNode>,
 		edges: DataSet<IVisEdge>,
