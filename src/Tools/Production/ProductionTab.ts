@@ -47,6 +47,7 @@ public resultTab: string = 'visualization';
 public shareLink: string = '';
 public resultStatus: ResultStatus = ResultStatus.NO_INPUT;
 public resultNew: ProductionResult|undefined;
+public resultNewCustomGraph: ProductionResult|undefined;
 public data: IProductionData;
 public intermediateItems: string[] = [];
 public intermediateNodeItems: IItemSchema[] = [];
@@ -141,15 +142,18 @@ this.intermediateNodeItems = this.intermediateItems
 						return;
 					}
 
-this.lastApiRequest = apiRequest;
-this.lastResponse = result;
+			this.lastApiRequest = apiRequest;
+				this.lastResponse = result;
 
-const factory = new ProductionResultFactory;
-this.resultNew = factory.create(apiRequest, result, rawData as any as IJsonSchema);
-if (this.intermediateItems.length > 0) {
-this.resultNew.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
-}
-this.resultStatus = ResultStatus.RESULT;
+				const factory = new ProductionResultFactory;
+				this.resultNew = factory.create(apiRequest, result, rawData as any as IJsonSchema);
+				if (this.intermediateItems.length > 0) {
+					this.resultNewCustomGraph = factory.create(apiRequest, result, rawData as any as IJsonSchema);
+					this.resultNewCustomGraph.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
+				} else {
+					this.resultNewCustomGraph = this.resultNew;
+				}
+				this.resultStatus = ResultStatus.RESULT;
 				};
 
 				if ($timeout) {
@@ -611,37 +615,43 @@ this.data.intermediateNodes = [...this.intermediateItems];
 this.scope.saveState();
 }
 
-private rebuildVisualization(): void
-{
-if (!this.lastResponse || !this.lastApiRequest) {
-return;
-}
+	private rebuildVisualization(): void
+	{
+		if (!this.lastResponse || !this.lastApiRequest) {
+			return;
+		}
 
-this.scope.$timeout(() => {
-const factory = new ProductionResultFactory;
-this.resultNew = factory.create(this.lastApiRequest!, this.lastResponse!, rawData as any as IJsonSchema);
-if (this.intermediateItems.length > 0) {
-this.resultNew!.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
-}
-this.resultStatus = ResultStatus.RESULT;
-});
-}
+		this.scope.$timeout(() => {
+			const factory = new ProductionResultFactory;
+			this.resultNew = factory.create(this.lastApiRequest!, this.lastResponse!, rawData as any as IJsonSchema);
+			if (this.intermediateItems.length > 0) {
+				this.resultNewCustomGraph = factory.create(this.lastApiRequest!, this.lastResponse!, rawData as any as IJsonSchema);
+				this.resultNewCustomGraph!.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
+			} else {
+				this.resultNewCustomGraph = this.resultNew;
+			}
+			this.resultStatus = ResultStatus.RESULT;
+		});
+	}
 
-public rebuildWithIntermediateNodes(intermediateItems: string[]): void
-{
-this.intermediateItems = intermediateItems;
-this.data.intermediateNodes = [...intermediateItems];
-if (!this.lastResponse || !this.lastApiRequest) {
-return;
-}
+	public rebuildWithIntermediateNodes(intermediateItems: string[]): void
+	{
+		this.intermediateItems = intermediateItems;
+		this.data.intermediateNodes = [...intermediateItems];
+		if (!this.lastResponse || !this.lastApiRequest) {
+			return;
+		}
 
-const factory = new ProductionResultFactory;
-this.resultNew = factory.create(this.lastApiRequest, this.lastResponse, rawData as any as IJsonSchema);
-if (this.intermediateItems.length > 0) {
-this.resultNew.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
-}
-this.resultStatus = ResultStatus.RESULT;
-}
+		const factory = new ProductionResultFactory;
+		this.resultNew = factory.create(this.lastApiRequest, this.lastResponse, rawData as any as IJsonSchema);
+		if (this.intermediateItems.length > 0) {
+			this.resultNewCustomGraph = factory.create(this.lastApiRequest, this.lastResponse, rawData as any as IJsonSchema);
+			this.resultNewCustomGraph.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
+		} else {
+			this.resultNewCustomGraph = this.resultNew;
+		}
+		this.resultStatus = ResultStatus.RESULT;
+	}
 
 public recalculateWeights()
 	{

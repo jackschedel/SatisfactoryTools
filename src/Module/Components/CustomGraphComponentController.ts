@@ -1053,10 +1053,81 @@ edges,
           },
         });
       }
-    } else if (edgeAtClick != null && !hasOtherSelected) {
-      // --- Right-clicked on an edge (only when no other nodes are selected) ---
+    } else if (edgeAtClick != null) {
+      // --- Right-clicked on an edge ---
       const visEdgeId = edgeAtClick;
 
+      // If nodes are selected, only allow when exactly one recipe node is selected
+      // and it is connected to/from this edge
+      if (selectedNodeIds.length > 0) {
+        if (selectedNodeIds.length !== 1) {
+          // Multiple nodes selected — don't show edge menu
+        } else {
+          const singleSelectedId = selectedNodeIds[0];
+          const singleGraphNode = result.graph.nodes.find((n) => n.id === singleSelectedId);
+          if (!singleGraphNode || !(singleGraphNode instanceof RecipeNode)) {
+            // Selected node is not a recipe node — don't show edge menu
+          } else {
+            // Check the edge connects to/from this recipe node
+            const visEdgeData = edges.get(visEdgeId) as any;
+            if (visEdgeData && (visEdgeData.from === singleSelectedId || visEdgeData.to === singleSelectedId)) {
+              // Valid: one recipe node selected, connected to this edge — fall through to normal edge logic
+              const isLinkEdge = this.linkPairs.some(
+                (p) => p.outEdgeId === visEdgeId || p.inEdgeId === visEdgeId,
+              );
+              if (!isLinkEdge) {
+                // Check if it's a split edge
+                const splitGroup = this.splitGroups.find(
+                  (g) => g.splitEdgeIds.indexOf(visEdgeId) !== -1,
+                );
+                if (splitGroup) {
+                  items.push({
+                    label: "Create Link",
+                    icon: "fa-link",
+                    action: () => {
+                      this.hideContextMenu();
+                      this.handleSplitEdgeDoubleClick(
+                        visEdgeId,
+                        splitGroup,
+                        nodes,
+                        edges,
+                        result,
+                      );
+                    },
+                  });
+                } else {
+                  // Normal graph edge
+                  const graphEdge = result.graph.edges.find((e) => e.id === visEdgeId);
+                  if (graphEdge) {
+                    const descriptor: ILinkNodeDescriptor = {
+                      fromNodeKey: getNodeKey(graphEdge.from),
+                      toNodeKey: getNodeKey(graphEdge.to),
+                      itemClassName: graphEdge.itemAmount.item,
+                    };
+                    const alreadyLinked = this.linkPairs.some(
+                      (p) =>
+                        p.descriptor.fromNodeKey === descriptor.fromNodeKey &&
+                        p.descriptor.toNodeKey === descriptor.toNodeKey &&
+                        p.descriptor.itemClassName === descriptor.itemClassName,
+                    );
+                    if (!alreadyLinked) {
+                      items.push({
+                        label: "Create Link",
+                        icon: "fa-link",
+                        action: () => {
+                          this.hideContextMenu();
+                          this.handleEdgeDoubleClick(visEdgeId, nodes, edges, result);
+                        },
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else {
+      // No nodes selected — original behavior
       // Don't allow creating link on a link edge
       const isLinkEdge = this.linkPairs.some(
         (p) => p.outEdgeId === visEdgeId || p.inEdgeId === visEdgeId,
@@ -1107,9 +1178,10 @@ edges,
 							});
 						}
 					}
-				}
-			}
-		}
+}
+}
+      } // close no-nodes-selected else
+}
 
     // If multi-selected link/combined nodes, show combine option even when clicking on background
     if (items.length === 0 && selectedNodeIds.length >= 2 && this.canCombineSelection(selectedNodeIds)) {
