@@ -645,44 +645,65 @@ export class CustomGraphComponentController implements IController {
 			selectedNodeIds = this.multiSelectedNodes.slice();
 		}
 
-		if (nodeAtClick != null) {
-			// --- Right-clicked on a node ---
-			const nodeId = nodeAtClick;
+    // Determine if other nodes besides the right-clicked one are selected
+    const rightClickedIsSelected = nodeAtClick != null && selectedNodeIds.indexOf(nodeAtClick) !== -1;
+    const hasOtherSelected = nodeAtClick != null
+      ? selectedNodeIds.some((id) => id !== nodeAtClick)
+      : selectedNodeIds.length > 0;
+    // If right-clicking on a node that is NOT in the selection while other nodes ARE selected, show no menu
+    if (nodeAtClick != null && hasOtherSelected && !rightClickedIsSelected) {
+      return;
+    }
+    // Multi-select mode: right-clicked node is selected AND other nodes are also selected
+    const isMultiSelect = hasOtherSelected && rightClickedIsSelected;
 
-			// Check if it's a combined link node
-			const combinedGroupIndex = this.combinedLinkGroups.findIndex(
-				(g) => g.combinedOutId === nodeId || g.combinedInId === nodeId,
-			);
-			if (combinedGroupIndex !== -1) {
-				items.push({
-					label: "Uncombine Link Nodes",
-					icon: "fa-expand-arrows-alt",
-					action: () => {
-						this.hideContextMenu();
-						this.uncombineCombinedGroup(
-							combinedGroupIndex,
-							nodes,
-							edges,
-							result,
-						);
-					},
-				});
-			}
+    if (nodeAtClick != null) {
+      // --- Right-clicked on a node ---
+      const nodeId = nodeAtClick;
 
-			// Check if it's a split node
-			const splitGroupIndex = this.splitGroups.findIndex(
-				(g) => g.splitNodeIds.indexOf(nodeId) !== -1,
-			);
-			if (splitGroupIndex !== -1) {
-				items.push({
-					label: "Recombine Split Recipe",
-					icon: "fa-compress-arrows-alt",
-					action: () => {
-						this.hideContextMenu();
-						this.combineSplitGroup(splitGroupIndex, nodes, edges);
-					},
-				});
-			}
+      // Check if it's a combined link node
+      const combinedGroupIndex = this.combinedLinkGroups.findIndex(
+        (g) => g.combinedOutId === nodeId || g.combinedInId === nodeId,
+      );
+      if (combinedGroupIndex !== -1) {
+        // Allow uncombine when single-select, or when the only selected nodes
+        // are both ends of the same combined link group.
+        const combinedGroup = this.combinedLinkGroups[combinedGroupIndex];
+        const isBothEndsSelected =
+          selectedNodeIds.length === 2 &&
+          selectedNodeIds.indexOf(combinedGroup.combinedOutId) !== -1 &&
+          selectedNodeIds.indexOf(combinedGroup.combinedInId) !== -1;
+        if (!isMultiSelect || isBothEndsSelected) {
+          items.push({
+            label: "Uncombine Link Nodes",
+            icon: "fa-expand-arrows-alt",
+            action: () => {
+              this.hideContextMenu();
+              this.uncombineCombinedGroup(
+                combinedGroupIndex,
+                nodes,
+                edges,
+                result,
+              );
+            },
+          });
+        }
+      }
+
+      // Check if it's a split node
+      const splitGroupIndex = this.splitGroups.findIndex(
+        (g) => g.splitNodeIds.indexOf(nodeId) !== -1,
+      );
+      if (splitGroupIndex !== -1 && !isMultiSelect) {
+        items.push({
+          label: "Recombine Split Recipe",
+          icon: "fa-compress-arrows-alt",
+          action: () => {
+            this.hideContextMenu();
+            this.combineSplitGroup(splitGroupIndex, nodes, edges);
+          },
+        });
+      }
 
       // Check if it's a link node
       const pairIndex = this.linkPairs.findIndex(
@@ -710,9 +731,9 @@ export class CustomGraphComponentController implements IController {
         }
       }
 
-			// Check if it's a RecipeNode
-			const graphNode = result.graph.nodes.find((n) => n.id === nodeId);
-			if (graphNode && graphNode instanceof RecipeNode) {
+      // Check if it's a RecipeNode (only when single-select)
+      const graphNode = result.graph.nodes.find((n) => n.id === nodeId);
+      if (graphNode && graphNode instanceof RecipeNode && !isMultiSelect) {
 				// Split by output (if eligible: any output item appears on 2+ output edges)
 				if (!this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
 					const outputEdges = result.graph.edges.filter(
@@ -783,8 +804,8 @@ export class CustomGraphComponentController implements IController {
 				}
 			}
 
-			// Check if it's an IntermediateNode
-			if (graphNode && graphNode instanceof IntermediateNode) {
+      // Check if it's an IntermediateNode (only when single-select)
+      if (graphNode && graphNode instanceof IntermediateNode && !isMultiSelect) {
 				const connectedEdges = result.graph.edges.filter(
 					(e) => e.from.id === nodeId || e.to.id === nodeId,
 				);
@@ -832,15 +853,15 @@ export class CustomGraphComponentController implements IController {
           });
         }
       }
-    } else if (edgeAtClick != null) {
-			// --- Right-clicked on an edge ---
-			const visEdgeId = edgeAtClick;
+    } else if (edgeAtClick != null && !hasOtherSelected) {
+      // --- Right-clicked on an edge (only when no other nodes are selected) ---
+      const visEdgeId = edgeAtClick;
 
-			// Don't allow creating link on a link edge
-			const isLinkEdge = this.linkPairs.some(
-				(p) => p.outEdgeId === visEdgeId || p.inEdgeId === visEdgeId,
-			);
-			if (!isLinkEdge) {
+      // Don't allow creating link on a link edge
+      const isLinkEdge = this.linkPairs.some(
+        (p) => p.outEdgeId === visEdgeId || p.inEdgeId === visEdgeId,
+      );
+      if (!isLinkEdge) {
 				// Check if it's a split edge
 				const splitGroup = this.splitGroups.find(
 					(g) => g.splitEdgeIds.indexOf(visEdgeId) !== -1,
