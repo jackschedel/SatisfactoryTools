@@ -572,35 +572,48 @@ export class CustomGraphComponentController implements IController {
 					// Apply stored combined links after layout/positions are set
 					this.applyStoredCombinedLinks(nodes, edges, result);
 
-					// Register click handler for multi-select (shift or ctrl/cmd) and context menu dismissal
-					this.network.on("click", (params: any) => {
-						// Dismiss context menu on any click
-						if (this.contextMenu.visible) {
-							this.hideContextMenu();
-							this.$scope.$applyAsync();
-						}
+                // Make Shift+click behave like Ctrl+click for vis-network's native
+                // multi-select. vis-network (via Hammer.js) checks event.ctrlKey to
+                // decide whether to add to selection. By overriding ctrlKey on the
+                // DOM event in the capture phase (before Hammer.js sees it), Shift
+                // becomes equivalent to Ctrl for selection purposes.
+                const graphCanvas = this.getGraphContainer().querySelector("canvas");
+                if (graphCanvas) {
+                    const patchShiftAsCtrl = (e: PointerEvent) => {
+                        if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
+                            Object.defineProperty(e, "ctrlKey", { get: () => true });
+                        }
+                    };
+                    graphCanvas.addEventListener("pointerdown", patchShiftAsCtrl, true);
+                    graphCanvas.addEventListener("pointerup", patchShiftAsCtrl, true);
+                }
 
-						const srcEvent = params.event && params.event.srcEvent;
-						const isMultiKey =
-							srcEvent &&
-							(srcEvent.shiftKey || srcEvent.ctrlKey || srcEvent.metaKey);
-						if (isMultiKey && params.nodes.length === 1) {
-							const clickedNodeId = params.nodes[0] as number;
-							const idx = this.multiSelectedNodes.indexOf(clickedNodeId);
-							if (idx !== -1) {
-								this.multiSelectedNodes.splice(idx, 1);
-							} else {
-								this.multiSelectedNodes.push(clickedNodeId);
-							}
-							this.network.selectNodes(this.multiSelectedNodes);
-						} else if (!isMultiKey) {
-							if (params.nodes.length === 1) {
-								this.multiSelectedNodes = [params.nodes[0] as number];
-							} else {
-								this.multiSelectedNodes = [];
-							}
-						}
-					});
+                // Register click handler for syncing multiSelectedNodes and context menu dismissal
+                this.network.on("click", (params: any) => {
+                    // Dismiss context menu on any click
+                    if (this.contextMenu.visible) {
+                        this.hideContextMenu();
+                        this.$scope.$applyAsync();
+                    }
+
+                    const srcEvent = params.event && params.event.srcEvent;
+                    const isMultiKey =
+                        srcEvent &&
+                        (srcEvent.shiftKey || srcEvent.ctrlKey || srcEvent.metaKey);
+
+                    if (isMultiKey) {
+                        // Ctrl/Cmd/Shift+click: vis-network handles multi-select natively
+                        // (Shift is patched to look like Ctrl above). Sync our tracking.
+                        this.multiSelectedNodes = (this.network.getSelectedNodes() as number[]).slice();
+                    } else {
+                        // Normal click (no modifier key)
+                        if (params.nodes.length === 1) {
+                            this.multiSelectedNodes = [params.nodes[0] as number];
+                        } else {
+                            this.multiSelectedNodes = [];
+                        }
+                    }
+                });
 
 					// Register right-click handler for context menu
 					this.network.on("oncontext", (params: any) => {
