@@ -919,21 +919,18 @@ const items: { label: string; icon: string; action: () => void }[] = [];
       // Check if it's a RecipeNode (only when single-select)
       const graphNode = result.graph.nodes.find((n) => n.id === nodeId);
       if (graphNode && graphNode instanceof RecipeNode && !isMultiSelect) {
-				// Split by output (if eligible: any output item appears on 2+ output edges)
-				if (!this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
-					const outputEdges = result.graph.edges.filter(
-						(e) => e.from.id === nodeId,
-					);
-					// Count how many edges each output item appears on
-					const outItemEdgeCount: { [item: string]: number } = {};
-					for (const e of outputEdges) {
-						outItemEdgeCount[e.itemAmount.item] =
-							(outItemEdgeCount[e.itemAmount.item] || 0) + 1;
-					}
-					// Find output items that appear on 2+ edges
-					const duplicatedOutItems = Object.keys(outItemEdgeCount).filter(
-						(item) => outItemEdgeCount[item] >= 2,
-					);
+// Split by output (if eligible: any output item appears on 2+ output edges)
+if (!this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
+const outputEdges = result.graph.edges.filter(
+(e) => e.from.id === nodeId,
+);
+// Count how many effective edges each output item appears on
+// (combined links count as a single edge, not multiple)
+const outItemEdgeCount = this.countEffectiveEdgesPerItem(outputEdges);
+// Find output items that appear on 2+ edges
+const duplicatedOutItems = Object.keys(outItemEdgeCount).filter(
+(item) => outItemEdgeCount[item] >= 2,
+);
 					for (const dupItem of duplicatedOutItems) {
 						const dupItemName = model.getItem(dupItem).prototype.name;
 						items.push({
@@ -953,21 +950,18 @@ const items: { label: string; icon: string; action: () => void }[] = [];
 						});
 					}
 				}
-				// Split by input (if eligible: any input item appears on 2+ input edges)
-				if (!this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
-					const inputEdges = result.graph.edges.filter(
-						(e) => e.to.id === nodeId,
-					);
-					// Count how many edges each item appears on
-					const itemEdgeCount: { [item: string]: number } = {};
-					for (const e of inputEdges) {
-						itemEdgeCount[e.itemAmount.item] =
-							(itemEdgeCount[e.itemAmount.item] || 0) + 1;
-					}
-					// Find items that appear on 2+ edges
-					const duplicatedItems = Object.keys(itemEdgeCount).filter(
-						(item) => itemEdgeCount[item] >= 2,
-					);
+// Split by input (if eligible: any input item appears on 2+ input edges)
+if (!this.splitGroups.some((g) => g.originalNodeId === nodeId)) {
+const inputEdges = result.graph.edges.filter(
+(e) => e.to.id === nodeId,
+);
+// Count how many effective edges each item appears on
+// (combined links count as a single edge, not multiple)
+const itemEdgeCount = this.countEffectiveEdgesPerItem(inputEdges);
+// Find items that appear on 2+ edges
+const duplicatedItems = Object.keys(itemEdgeCount).filter(
+(item) => itemEdgeCount[item] >= 2,
+);
 					for (const dupItem of duplicatedItems) {
 						const dupItemName = model.getItem(dupItem).prototype.name;
 						items.push({
@@ -1764,6 +1758,47 @@ amount: itemAmount,
 	// ==================== Combined Link Methods ====================
 
   /**
+   * Count the effective number of edges per item for split eligibility,
+   * treating edges that belong to the same combined link group as a single edge.
+   */
+  private countEffectiveEdgesPerItem(
+    graphEdges: any[],
+  ): { [item: string]: number } {
+    const effectiveCount: { [item: string]: number } = {};
+    const countedCombinedGroups = new Set<ICombinedLinkGroup>();
+
+    for (const e of graphEdges) {
+      const edgeFromKey = getNodeKey(e.from);
+      const edgeToKey = getNodeKey(e.to);
+      const edgeItem = e.itemAmount.item;
+
+      // Check if this edge is part of a combined link group
+      const combinedGroup = this.combinedLinkGroups.find((g) =>
+        g.originalPairs.some(
+          (p) =>
+            p.descriptor.fromNodeKey === edgeFromKey &&
+            p.descriptor.toNodeKey === edgeToKey &&
+            p.descriptor.itemClassName === edgeItem,
+        ),
+      );
+
+      if (combinedGroup) {
+        if (!countedCombinedGroups.has(combinedGroup)) {
+          // First edge from this combined group — count as 1
+          countedCombinedGroups.add(combinedGroup);
+          effectiveCount[edgeItem] = (effectiveCount[edgeItem] || 0) + 1;
+        }
+        // else: already counted this combined group, skip
+      } else {
+        // Not part of any combined group — count individually
+        effectiveCount[edgeItem] = (effectiveCount[edgeItem] || 0) + 1;
+      }
+    }
+
+    return effectiveCount;
+  }
+
+  /**
    * Check whether a set of link pairs contains at least one combinable group
    * (2+ pairs sharing the same item and destination key).
    */
@@ -2004,7 +2039,6 @@ amount: itemAmount,
     const sourceKey = type === "out"
       ? pairs[0].descriptor.toNodeKey
       : pairs[0].descriptor.fromNodeKey;
-    const recipeCount = pairs.length;
 
 		// Gather edge data from each pair before removal
 		const pairEdgeData: {
@@ -2077,11 +2111,23 @@ const combinedInPos = posData[firstPair.linkInId] || { x: 0, y: 0 };
 			if (idx !== -1) {
 				this.linkPairs.splice(idx, 1);
 			}
-			removedPairs.push(pair);
-		}
+removedPairs.push(pair);
+}
 
-		// Determine labels
-		const amountStr = Strings.formatItemAmount(totalAmount, itemClassName);
+// Deduplicate source and target vis IDs for edge creation (handles split scenarios)
+const sourceAmounts = new Map<number, number>();
+for (const data of pairEdgeData) {
+sourceAmounts.set(data.fromVisId, (sourceAmounts.get(data.fromVisId) || 0) + data.amount);
+}
+const targetAmounts = new Map<number, number>();
+for (const data of pairEdgeData) {
+targetAmounts.set(data.toVisId, (targetAmounts.get(data.toVisId) || 0) + data.amount);
+}
+const uniqueSources = sourceAmounts.size;
+const uniqueTargets = targetAmounts.size;
+
+// Determine labels
+const amountStr = Strings.formatItemAmount(totalAmount, itemClassName);
 		let sourceName: string;
 
 		// Find the source display name from graph nodes
@@ -2096,33 +2142,35 @@ let outLabel: string;
 let inLabel: string;
 
 if (type === "out") {
+const toStr = uniqueTargets === 1 ? sourceName : sourceName + " (" + uniqueTargets + " splits)";
 outLabel =
 "<b>Link Out: " +
 itemName +
 "</b>\n<i>To: " +
-sourceName +
+toStr +
 "</i>\n" +
 amountStr;
 inLabel =
 "<b>Link In: " +
 itemName +
 "</b>\n<i>From: (" +
-recipeCount +
+uniqueSources +
 " sources)</i>\n" +
 amountStr;
 } else {
+const fromStr = uniqueSources === 1 ? sourceName : sourceName + " (" + uniqueSources + " splits)";
 outLabel =
 "<b>Link Out: " +
 itemName +
 "</b>\n<i>To: (" +
-recipeCount +
+uniqueTargets +
 " destinations)</i>\n" +
 amountStr;
 inLabel =
 "<b>Link In: " +
 itemName +
 "</b>\n<i>From: " +
-sourceName +
+fromStr +
 "</i>\n" +
 amountStr;
 }
@@ -2176,59 +2224,32 @@ amountStr;
 			color: "rgba(238, 238, 238, 1)",
 		};
 
-if (type === "out") {
-// Multiple sources → combined Link Out node
-for (const data of pairEdgeData) {
+// Source edges: one per unique source vis ID (deduplicated for split scenarios)
+sourceAmounts.forEach((srcAmount, srcId) => {
 const edgeId = this.combinedEdgeIdCounter++;
 combinedEdgeIds.push(edgeId);
 edges.add({
 id: edgeId,
-from: data.fromVisId,
+from: srcId,
 to: combinedOutId,
-label: data.outLabel,
+label: itemName + "\n" + Strings.formatItemAmount(srcAmount, itemClassName),
 color: linkEdgeColor,
 font: linkEdgeFont,
 } as any);
-}
-// Combined Link In node → single target
-const targetId = pairEdgeData[0].toVisId;
-const inEdgeId = this.combinedEdgeIdCounter++;
-combinedEdgeIds.push(inEdgeId);
-edges.add({
-id: inEdgeId,
-from: combinedInId,
-to: targetId,
-label: itemName + "\n" + amountStr,
-color: linkEdgeColor,
-font: linkEdgeFont,
-} as any);
-} else {
-// Single source → combined Link Out node
-const sourceId = pairEdgeData[0].fromVisId;
-const outEdgeId = this.combinedEdgeIdCounter++;
-combinedEdgeIds.push(outEdgeId);
-edges.add({
-id: outEdgeId,
-from: sourceId,
-to: combinedOutId,
-label: itemName + "\n" + amountStr,
-color: linkEdgeColor,
-font: linkEdgeFont,
-} as any);
-// Combined Link In node → multiple targets
-for (const data of pairEdgeData) {
+});
+// Target edges: one per unique target vis ID (deduplicated for split scenarios)
+targetAmounts.forEach((tgtAmount, tgtId) => {
 const edgeId = this.combinedEdgeIdCounter++;
 combinedEdgeIds.push(edgeId);
 edges.add({
 id: edgeId,
 from: combinedInId,
-to: data.toVisId,
-label: data.inLabel,
+to: tgtId,
+label: itemName + "\n" + Strings.formatItemAmount(tgtAmount, itemClassName),
 color: linkEdgeColor,
 font: linkEdgeFont,
 } as any);
-}
-}
+});
 
 const descriptor: ICombinedLinkDescriptor = {
 type: type,
@@ -2853,7 +2874,9 @@ if (descriptor.linkOutPos) {
     // 2) Original vis edges used to identify primary split edges are missing.
     const recipeKey = getNodeKey(recipeNode);
 
-    // First, uncombine any combined link groups that involve this recipe node
+    // First, uncombine any combined link groups that involve this recipe node.
+    // Save their info so we can re-combine after the split without duplicating.
+    const removedCombinedGroupInfos: { type: "out" | "in"; combinedOutPos?: { x: number; y: number }; combinedInPos?: { x: number; y: number }; descriptors: ILinkNodeDescriptor[] }[] = [];
     for (let i = this.combinedLinkGroups.length - 1; i >= 0; i--) {
       const group = this.combinedLinkGroups[i];
       const involvesRecipe = group.originalPairs.some(
@@ -2862,6 +2885,13 @@ if (descriptor.linkOutPos) {
           p.descriptor.toNodeKey === recipeKey,
       );
       if (involvesRecipe) {
+        const cgPos = this.network.getPositions([group.combinedOutId, group.combinedInId]);
+        removedCombinedGroupInfos.push({
+          type: group.type,
+          combinedOutPos: cgPos[group.combinedOutId],
+          combinedInPos: cgPos[group.combinedInId],
+          descriptors: group.originalPairs.map(p => ({ ...p.descriptor })),
+        });
         this.uncombineCombinedGroup(i, nodes, edges, result);
       }
     }
@@ -2871,6 +2901,7 @@ if (descriptor.linkOutPos) {
       descriptor: ILinkNodeDescriptor;
       linkOutPos?: { x: number; y: number };
       linkInPos?: { x: number; y: number };
+      combinedGroupIndex?: number;
     }
     const removedLinkInfos: IRemovedLinkInfo[] = [];
 
@@ -2882,10 +2913,25 @@ if (descriptor.linkOutPos) {
       ) {
         // Save info for recreation after split
         const linkPositions = this.network.getPositions([pair.linkOutId, pair.linkInId]);
+
+        // Check if this pair was part of a combined group that we just uncombined
+        let cgIdx: number | undefined;
+        for (let ci = 0; ci < removedCombinedGroupInfos.length; ci++) {
+          if (removedCombinedGroupInfos[ci].descriptors.some(d =>
+            d.fromNodeKey === pair.descriptor.fromNodeKey &&
+            d.toNodeKey === pair.descriptor.toNodeKey &&
+            d.itemClassName === pair.descriptor.itemClassName
+          )) {
+            cgIdx = ci;
+            break;
+          }
+        }
+
         removedLinkInfos.push({
           descriptor: { ...pair.descriptor },
           linkOutPos: linkPositions[pair.linkOutId],
           linkInPos: linkPositions[pair.linkInId],
+          combinedGroupIndex: cgIdx,
         });
 
         edges.remove(pair.outEdgeId);
@@ -3082,6 +3128,7 @@ splitFractions.push(fraction);
         edges,
         result,
         recipeKey,
+        removedCombinedGroupInfos,
       );
     }
 
@@ -3098,7 +3145,7 @@ splitFractions.push(fraction);
    * node and are auto-combined into a single link-out/link-in node pair.
    */
   private recreateLinksOnSplitEdges(
-    removedLinkInfos: { descriptor: ILinkNodeDescriptor; linkOutPos?: { x: number; y: number }; linkInPos?: { x: number; y: number } }[],
+    removedLinkInfos: { descriptor: ILinkNodeDescriptor; linkOutPos?: { x: number; y: number }; linkInPos?: { x: number; y: number }; combinedGroupIndex?: number }[],
     group: ISplitGroup,
     splitFractions: number[],
     visPrimaryEdges: any[],
@@ -3108,7 +3155,11 @@ splitFractions.push(fraction);
     edges: DataSet<IVisEdge>,
     result: ProductionResult,
     recipeKey: string,
+    removedCombinedGroupInfos: { type: "out" | "in"; combinedOutPos?: { x: number; y: number }; combinedInPos?: { x: number; y: number }; descriptors: ILinkNodeDescriptor[] }[],
   ): void {
+    // Map from combinedGroupIndex to all recreated pairs for that group
+    const combinedGroupPairsMap = new Map<number, ILinkPair[]>();
+
     for (const info of removedLinkInfos) {
       const isFromRecipe = info.descriptor.fromNodeKey === recipeKey;
       const isInSplitDirection = isOutput ? isFromRecipe : !isFromRecipe;
@@ -3139,7 +3190,11 @@ splitFractions.push(fraction);
         }
 
         const fraction = splitFractions[si];
-        const scaledAmount = graphEdge.itemAmount.amount * fraction;
+        // Primary edges (split-item in split direction) carry the full edge amount;
+        // non-primary edges are scaled by the split fraction.
+        const scaledAmount = (isInSplitDirection && isOnSplitItem)
+          ? graphEdge.itemAmount.amount
+          : graphEdge.itemAmount.amount * fraction;
 
         // Find the split edge connecting this split node to/from the other node
         const splitEdge = this.findSplitEdgeForLink(
@@ -3182,30 +3237,64 @@ splitFractions.push(fraction);
         recreatedPairs.push(pair);
       }
 
-      if (recreatedPairs.length >= 2) {
-        // Auto-combine: output links → "out" type (multiple split sources → one dest),
-        // input links → "in" type (one source → multiple split destinations)
-        const combineType: "out" | "in" = isFromRecipe ? "out" : "in";
-        this.combineLinksGroup(recreatedPairs, combineType, nodes, edges, result);
+      if (info.combinedGroupIndex != null) {
+        // Collect pairs for combined group — will be combined together at the end
+        const existing = combinedGroupPairsMap.get(info.combinedGroupIndex) || [];
+        existing.push(...recreatedPairs);
+        combinedGroupPairsMap.set(info.combinedGroupIndex, existing);
+      } else {
+        // Individual link pair (not from a combined group) — handle as before
+        if (recreatedPairs.length >= 2) {
+          // Auto-combine: output links → "out" type (multiple split sources → one dest),
+          // input links → "in" type (one source → multiple split destinations)
+          const combineType: "out" | "in" = isFromRecipe ? "out" : "in";
+          this.combineLinksGroup(recreatedPairs, combineType, nodes, edges, result);
 
-        // Restore original link positions on the combined nodes
-        const lastGroup = this.combinedLinkGroups[this.combinedLinkGroups.length - 1];
-        if (lastGroup && info.linkOutPos) {
-          nodes.update({ id: lastGroup.combinedOutId, x: info.linkOutPos.x, y: info.linkOutPos.y });
-        }
-        if (lastGroup && info.linkInPos) {
-          nodes.update({ id: lastGroup.combinedInId, x: info.linkInPos.x, y: info.linkInPos.y });
-        }
-      } else if (recreatedPairs.length === 1) {
-        // Single link pair — restore positions
-        if (info.linkOutPos) {
-          nodes.update({ id: recreatedPairs[0].linkOutId, x: info.linkOutPos.x, y: info.linkOutPos.y });
-        }
-        if (info.linkInPos) {
-          nodes.update({ id: recreatedPairs[0].linkInId, x: info.linkInPos.x, y: info.linkInPos.y });
+          // Restore original link positions on the combined nodes
+          const lastGroup = this.combinedLinkGroups[this.combinedLinkGroups.length - 1];
+          if (lastGroup && info.linkOutPos) {
+            nodes.update({ id: lastGroup.combinedOutId, x: info.linkOutPos.x, y: info.linkOutPos.y });
+          }
+          if (lastGroup && info.linkInPos) {
+            nodes.update({ id: lastGroup.combinedInId, x: info.linkInPos.x, y: info.linkInPos.y });
+          }
+        } else if (recreatedPairs.length === 1) {
+          // Single link pair — restore positions
+          if (info.linkOutPos) {
+            nodes.update({ id: recreatedPairs[0].linkOutId, x: info.linkOutPos.x, y: info.linkOutPos.y });
+          }
+          if (info.linkInPos) {
+            nodes.update({ id: recreatedPairs[0].linkInId, x: info.linkInPos.x, y: info.linkInPos.y });
+          }
         }
       }
     }
+
+    // Combine all pairs from each original combined group together (prevents duplication)
+    combinedGroupPairsMap.forEach((pairs, cgIndex) => {
+      if (pairs.length >= 2) {
+        const cgInfo = removedCombinedGroupInfos[cgIndex];
+        this.combineLinksGroup(pairs, cgInfo.type, nodes, edges, result);
+
+        // Restore original combined link positions
+        const lastGroup = this.combinedLinkGroups[this.combinedLinkGroups.length - 1];
+        if (lastGroup && cgInfo.combinedOutPos) {
+          nodes.update({ id: lastGroup.combinedOutId, x: cgInfo.combinedOutPos.x, y: cgInfo.combinedOutPos.y });
+        }
+        if (lastGroup && cgInfo.combinedInPos) {
+          nodes.update({ id: lastGroup.combinedInId, x: cgInfo.combinedInPos.x, y: cgInfo.combinedInPos.y });
+        }
+      } else if (pairs.length === 1) {
+        // Single pair from a combined group — just leave as individual link pair
+        const info = removedLinkInfos.find(i => i.combinedGroupIndex === cgIndex);
+        if (info && info.linkOutPos) {
+          nodes.update({ id: pairs[0].linkOutId, x: info.linkOutPos.x, y: info.linkOutPos.y });
+        }
+        if (info && info.linkInPos) {
+          nodes.update({ id: pairs[0].linkInId, x: info.linkInPos.x, y: info.linkInPos.y });
+        }
+      }
+    });
   }
 
   /**
