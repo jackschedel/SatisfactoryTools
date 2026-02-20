@@ -819,37 +819,64 @@ export class CustomGraphComponentController implements IController {
 
       // Check if it's an IntermediateNode (only when single-select)
       if (graphNode && graphNode instanceof IntermediateNode && !isMultiSelect) {
-				const connectedEdges = result.graph.edges.filter(
-					(e) => e.from.id === nodeId || e.to.id === nodeId,
-				);
-				const hasLinkableEdges = connectedEdges.some((graphEdge) => {
-					const desc: ILinkNodeDescriptor = {
-						fromNodeKey: getNodeKey(graphEdge.from),
-						toNodeKey: getNodeKey(graphEdge.to),
-						itemClassName: graphEdge.itemAmount.item,
-					};
-					const alreadyLinked = this.linkPairs.some(
-						(p) =>
-							p.descriptor.fromNodeKey === desc.fromNodeKey &&
-							p.descriptor.toNodeKey === desc.toNodeKey &&
-							p.descriptor.itemClassName === desc.itemClassName,
-					);
-					const isLinkEdge = this.linkPairs.some(
-						(p) => p.outEdgeId === graphEdge.id || p.inEdgeId === graphEdge.id,
-					);
-					return !alreadyLinked && !isLinkEdge;
-				});
-				if (hasLinkableEdges) {
-					items.push({
-						label: "Create Links for All Edges",
-						icon: "fa-link",
-						action: () => {
-							this.hideContextMenu();
-							this.handleNodeDoubleClick(nodeId, nodes, edges, result, false);
-						},
-					});
-				}
-			}
+const intermediateKey = getNodeKey(graphNode);
+const connectedEdges = result.graph.edges.filter(
+(e) => e.from.id === nodeId || e.to.id === nodeId,
+);
+const hasLinkableEdges = connectedEdges.some((graphEdge) => {
+const desc: ILinkNodeDescriptor = {
+fromNodeKey: getNodeKey(graphEdge.from),
+toNodeKey: getNodeKey(graphEdge.to),
+itemClassName: graphEdge.itemAmount.item,
+};
+const alreadyLinked = this.linkPairs.some(
+(p) =>
+p.descriptor.fromNodeKey === desc.fromNodeKey &&
+p.descriptor.toNodeKey === desc.toNodeKey &&
+p.descriptor.itemClassName === desc.itemClassName,
+);
+const isLinkEdge = this.linkPairs.some(
+(p) => p.outEdgeId === graphEdge.id || p.inEdgeId === graphEdge.id,
+);
+return !alreadyLinked && !isLinkEdge;
+});
+if (hasLinkableEdges) {
+items.push({
+label: "Create Links for All Edges",
+icon: "fa-link",
+action: () => {
+this.hideContextMenu();
+this.handleNodeDoubleClick(nodeId, nodes, edges, result, false);
+},
+});
+}
+
+// Recombine All Links: show when the intermediate has any attached link pairs
+const attachedLinkPairIndices: number[] = [];
+for (let i = 0; i < this.linkPairs.length; i++) {
+const p = this.linkPairs[i];
+if (
+p.descriptor.fromNodeKey === intermediateKey ||
+p.descriptor.toNodeKey === intermediateKey
+) {
+attachedLinkPairIndices.push(i);
+}
+}
+if (attachedLinkPairIndices.length > 0) {
+items.push({
+label: "Recombine All Links",
+icon: "fa-unlink",
+action: () => {
+this.hideContextMenu();
+this.recombineAllLinksForNode(
+attachedLinkPairIndices,
+nodes,
+edges,
+);
+},
+});
+}
+}
 
       // Combine links option when multiple link/combined nodes are selected
       if (selectedNodeIds.length >= 2 && this.canCombineSelection(selectedNodeIds)) {
@@ -965,30 +992,62 @@ export class CustomGraphComponentController implements IController {
 		}
 	}
 
-	private removeLinkPair(
-		pairIndex: number,
-		nodes: DataSet<IVisNode>,
-		edges: DataSet<IVisEdge>,
-	): void {
-		const pair = this.linkPairs[pairIndex];
+private removeLinkPair(
+pairIndex: number,
+nodes: DataSet<IVisNode>,
+edges: DataSet<IVisEdge>,
+): void {
+const pair = this.linkPairs[pairIndex];
 
-		// Remove link edges
-		edges.remove(pair.outEdgeId);
-		edges.remove(pair.inEdgeId);
+// Remove link edges
+edges.remove(pair.outEdgeId);
+edges.remove(pair.inEdgeId);
 
-		// Remove link nodes
-		nodes.remove(pair.linkOutId);
-		nodes.remove(pair.linkInId);
+// Remove link nodes
+nodes.remove(pair.linkOutId);
+nodes.remove(pair.linkInId);
 
-		// Restore original edge
-		edges.add(pair.originalEdgeData);
+// Restore original edge
+edges.add(pair.originalEdgeData);
 
-		// Remove from tracking
-		this.linkPairs.splice(pairIndex, 1);
+// Remove from tracking
+this.linkPairs.splice(pairIndex, 1);
 
-		this.saveLinkNodes();
-		this.saveNodePositions();
-	}
+this.saveLinkNodes();
+this.saveNodePositions();
+}
+
+private recombineAllLinksForNode(
+pairIndices: number[],
+nodes: DataSet<IVisNode>,
+edges: DataSet<IVisEdge>,
+): void {
+// Process in reverse order so that splice indices remain valid
+const sorted = pairIndices.slice().sort((a, b) => b - a);
+for (const idx of sorted) {
+const pair = this.linkPairs[idx];
+if (!pair) {
+continue;
+}
+
+// Remove link edges
+edges.remove(pair.outEdgeId);
+edges.remove(pair.inEdgeId);
+
+// Remove link nodes
+nodes.remove(pair.linkOutId);
+nodes.remove(pair.linkInId);
+
+// Restore original edge
+edges.add(pair.originalEdgeData);
+
+// Remove from tracking
+this.linkPairs.splice(idx, 1);
+}
+
+this.saveLinkNodes();
+this.saveNodePositions();
+}
 
 	// ==================== Link Node Methods ====================
 
