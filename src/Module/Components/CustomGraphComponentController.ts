@@ -838,20 +838,17 @@ export class CustomGraphComponentController implements IController {
 				}
 			}
 
-      // Combine links option when multiple link nodes are selected
-      if (selectedNodeIds.length >= 2) {
-        const selectedLinkPairs = this.getSelectedLinkPairs(selectedNodeIds);
-        if (this.hasCombinableGroups(selectedLinkPairs)) {
-          items.push({
-            label: "Combine Selected Link Nodes",
-            icon: "fa-object-group",
-            action: () => {
-              this.hideContextMenu();
-              this.handleCombineLinks(selectedNodeIds, nodes, edges, result);
-              this.multiSelectedNodes = [];
-            },
-          });
-        }
+      // Combine links option when multiple link/combined nodes are selected
+      if (selectedNodeIds.length >= 2 && this.canCombineSelection(selectedNodeIds)) {
+        items.push({
+          label: "Combine Selected Link Nodes",
+          icon: "fa-object-group",
+          action: () => {
+            this.hideContextMenu();
+            this.handleCombineLinks(selectedNodeIds, nodes, edges, result);
+            this.multiSelectedNodes = [];
+          },
+        });
       }
     } else if (edgeAtClick != null && !hasOtherSelected) {
       // --- Right-clicked on an edge (only when no other nodes are selected) ---
@@ -911,20 +908,17 @@ export class CustomGraphComponentController implements IController {
 			}
 		}
 
-    // If multi-selected link nodes, show combine option even when clicking on background
-    if (items.length === 0 && selectedNodeIds.length >= 2) {
-      const selectedLinkPairs = this.getSelectedLinkPairs(selectedNodeIds);
-      if (this.hasCombinableGroups(selectedLinkPairs)) {
-        items.push({
-          label: "Combine Selected Link Nodes",
-          icon: "fa-object-group",
-          action: () => {
-            this.hideContextMenu();
-            this.handleCombineLinks(selectedNodeIds, nodes, edges, result);
-            this.multiSelectedNodes = [];
-          },
-        });
-      }
+    // If multi-selected link/combined nodes, show combine option even when clicking on background
+    if (items.length === 0 && selectedNodeIds.length >= 2 && this.canCombineSelection(selectedNodeIds)) {
+      items.push({
+        label: "Combine Selected Link Nodes",
+        icon: "fa-object-group",
+        action: () => {
+          this.hideContextMenu();
+          this.handleCombineLinks(selectedNodeIds, nodes, edges, result);
+          this.multiSelectedNodes = [];
+        },
+      });
     }
 
 		if (items.length === 0) {
@@ -1521,6 +1515,73 @@ export class CustomGraphComponentController implements IController {
   }
 
   /**
+   * Get combined link groups whose nodes are among the selected node IDs.
+   */
+  private getSelectedCombinedGroups(selectedNodeIds: number[]): ICombinedLinkGroup[] {
+    const groups = new Set<ICombinedLinkGroup>();
+    for (const nodeId of selectedNodeIds) {
+      const group = this.combinedLinkGroups.find(
+        (g) => g.combinedOutId === nodeId || g.combinedInId === nodeId,
+      );
+      if (group) {
+        groups.add(group);
+      }
+    }
+    return Array.from(groups);
+  }
+
+  /**
+   * Check whether the current selection (regular link pairs + combined link groups)
+   * can be combined into a (larger) combined group.
+   * Requires at least 2 distinct sources (individual pairs or combined groups).
+   */
+  private canCombineSelection(selectedNodeIds: number[]): boolean {
+    const regularPairs = this.getSelectedLinkPairs(selectedNodeIds);
+    const combinedGroups = this.getSelectedCombinedGroups(selectedNodeIds);
+
+    // Need at least 2 separate sources (distinct pairs or groups)
+    const sourceCount = regularPairs.length + combinedGroups.length;
+    if (sourceCount < 2) {
+      return false;
+    }
+
+    // Collect all descriptors (regular pairs + original pairs from combined groups)
+    const allDescriptors: ILinkNodeDescriptor[] = [];
+    for (const pair of regularPairs) {
+      allDescriptors.push(pair.descriptor);
+    }
+    for (const group of combinedGroups) {
+      for (const origPair of group.originalPairs) {
+        allDescriptors.push(origPair.descriptor);
+      }
+    }
+
+    if (allDescriptors.length < 2) {
+      return false;
+    }
+
+    const toCounts: { [key: string]: number } = {};
+    const fromCounts: { [key: string]: number } = {};
+    for (const desc of allDescriptors) {
+      const toKey = desc.itemClassName + "||to||" + desc.toNodeKey;
+      toCounts[toKey] = (toCounts[toKey] || 0) + 1;
+      const fromKey = desc.itemClassName + "||from||" + desc.fromNodeKey;
+      fromCounts[fromKey] = (fromCounts[fromKey] || 0) + 1;
+    }
+    for (const key in toCounts) {
+      if (toCounts.hasOwnProperty(key) && toCounts[key] >= 2) {
+        return true;
+      }
+    }
+    for (const key in fromCounts) {
+      if (fromCounts.hasOwnProperty(key) && fromCounts[key] >= 2) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Get unique link pairs corresponding to the selected node IDs.
    */
   private getSelectedLinkPairs(selectedNodeIds: number[]): ILinkPair[] {
@@ -1543,8 +1604,54 @@ export class CustomGraphComponentController implements IController {
     result: ProductionResult,
   ): void {
     const selectedPairs = this.getSelectedLinkPairs(selectedNodeIds);
-    if (selectedPairs.length >= 2) {
-      this.tryCombinePairs(selectedPairs, nodes, edges, result);
+    const selectedCombinedGroups = this.getSelectedCombinedGroups(selectedNodeIds);
+
+    // If no combined groups are involved, just combine the regular pairs
+    if (selectedCombinedGroups.length === 0) {
+      if (selectedPairs.length >= 2) {
+        this.tryCombinePairs(selectedPairs, nodes, edges, result);
+      }
+      return;
+    }
+
+    // Collect all original descriptors from selected regular pairs and combined groups
+    // so we can find them again after uncombining
+    const allDescriptors: ILinkNodeDescriptor[] = [];
+    for (const pair of selectedPairs) {
+      allDescriptors.push({ ...pair.descriptor });
+    }
+    for (const group of selectedCombinedGroups) {
+      for (const origPair of group.originalPairs) {
+        allDescriptors.push({ ...origPair.descriptor });
+      }
+    }
+
+    // Uncombine selected combined groups (process in reverse index order to avoid shifting)
+    const groupIndices = selectedCombinedGroups
+      .map((g) => this.combinedLinkGroups.indexOf(g))
+      .filter((i) => i !== -1)
+      .sort((a, b) => b - a);
+
+    for (const idx of groupIndices) {
+      this.uncombineCombinedGroup(idx, nodes, edges, result);
+    }
+
+    // Now find all matching pairs in this.linkPairs using the collected descriptors
+    const allPairs: ILinkPair[] = [];
+    for (const desc of allDescriptors) {
+      const pair = this.linkPairs.find(
+        (p) =>
+          p.descriptor.fromNodeKey === desc.fromNodeKey &&
+          p.descriptor.toNodeKey === desc.toNodeKey &&
+          p.descriptor.itemClassName === desc.itemClassName,
+      );
+      if (pair && allPairs.indexOf(pair) === -1) {
+        allPairs.push(pair);
+      }
+    }
+
+    if (allPairs.length >= 2) {
+      this.tryCombinePairs(allPairs, nodes, edges, result);
     }
   }
 
