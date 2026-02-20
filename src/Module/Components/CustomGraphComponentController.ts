@@ -129,15 +129,17 @@ function getNodeDisplayName(node: GraphNode): string {
 }
 
 export class CustomGraphComponentController implements IController {
-	public result: ProductionResult;
-	public tabId: string;
-	public frozen: boolean = false;
-	public exportMessage: string = "";
+public result: ProductionResult;
+public tabId: string;
+public intermediateItems: string[];
+public frozen: boolean = false;
+public exportMessage: string = "";
 
 	public static $inject = ["$element", "$scope", "$timeout", "$interval"];
 
-	private unregisterWatcherCallback: () => void;
-	private unregisterTabIdWatcherCallback: () => void;
+private unregisterWatcherCallback: () => void;
+private unregisterTabIdWatcherCallback: () => void;
+private unregisterIntermediateWatcherCallback: () => void;
 	private network: Network;
 	private fitted: boolean = false;
 	private interval: IPromise<any>;
@@ -173,8 +175,11 @@ export class CustomGraphComponentController implements IController {
 	// Multi-select tracking (shift or ctrl/cmd)
 	private multiSelectedNodes: number[] = [];
 
-	// Mapping from numeric node ID to stable node key for position persistence
-	private nodeIdToKeyMap: { [id: number]: string } = {};
+// Mapping from numeric node ID to stable node key for position persistence
+private nodeIdToKeyMap: { [id: number]: string } = {};
+
+// Temporary position map used to preserve node positions across intermediate node changes
+private preservedPositionsMap: { [key: string]: { x: number; y: number } } | null = null;
 
 	private static readonly POSITIONS_STORAGE_KEY = "customGraphNodePositions";
 	private static readonly FROZEN_STORAGE_KEY = "customGraphFrozenTabs";
@@ -211,7 +216,51 @@ export class CustomGraphComponentController implements IController {
 			},
 		);
 
-		this.unregisterWatcherCallback = this.$scope.$watch(
+		// Watch for intermediate items changes — update even when frozen
+// Use $timeout to defer so ProductionTab.rebuildVisualization() has time
+// to set the new resultNew (which includes intermediate nodes) first.
+this.unregisterIntermediateWatcherCallback = this.$scope.$watchCollection(
+() => {
+return this.intermediateItems;
+},
+(newValue, oldValue) => {
+if (newValue === oldValue) {
+return;
+}
+this.$timeout(0).then(() => {
+if (this.result) {
+// Capture current node positions before rebuilding so existing nodes don't move
+if (this.frozen && this.network && this.nodesDataSet) {
+const rawPositions = this.network.getPositions();
+const posMap: { [key: string]: { x: number; y: number } } = {};
+this.nodesDataSet.forEach((node: any) => {
+const id = node.id;
+const key = this.nodeIdToKeyMap[id];
+if (key && rawPositions[id]) {
+posMap[key] = rawPositions[id];
+}
+});
+// Also capture link node positions by their descriptor keys
+for (const pair of this.linkPairs) {
+if (rawPositions[pair.linkOutId]) {
+const outKey = "linkOut:" + pair.descriptor.fromNodeKey + "||" + pair.descriptor.toNodeKey + "||" + pair.descriptor.itemClassName;
+posMap[outKey] = rawPositions[pair.linkOutId];
+}
+if (rawPositions[pair.linkInId]) {
+const inKey = "linkIn:" + pair.descriptor.fromNodeKey + "||" + pair.descriptor.toNodeKey + "||" + pair.descriptor.itemClassName;
+posMap[inKey] = rawPositions[pair.linkInId];
+}
+}
+this.preservedPositionsMap = posMap;
+}
+this.frozenResult = this.result;
+this.updateData(this.result);
+}
+});
+},
+);
+
+this.unregisterWatcherCallback = this.$scope.$watch(
 			() => {
 				return this.result;
 			},
@@ -248,9 +297,10 @@ export class CustomGraphComponentController implements IController {
 	}
 
 	public $onDestroy(): void {
-		this.saveNodePositions();
-		this.unregisterWatcherCallback();
-		this.unregisterTabIdWatcherCallback();
+this.saveNodePositions();
+this.unregisterWatcherCallback();
+this.unregisterTabIdWatcherCallback();
+this.unregisterIntermediateWatcherCallback();
 		this.$interval.cancel(this.interval);
 	}
 
@@ -543,25 +593,138 @@ export class CustomGraphComponentController implements IController {
 						this.network.fit();
 					}
 
-					// After ELK layout, restore saved positions if frozen and they match
-					const savedPositions = this.loadNodePositions();
-					if (
-						this.frozen &&
-						this.savedPositionsMatchGraph(savedPositions, result)
-					) {
-						nodes.forEach((node) => {
-							const id = node.id;
-							const key = this.nodeIdToKeyMap[id];
-							if (key && savedPositions[key]) {
-								nodes.update({
-									id: id,
-									x: savedPositions[key].x,
-									y: savedPositions[key].y,
-								});
-							}
-						});
-						this.network.fit();
-					}
+// After ELK layout, check if we have preserved positions from an intermediate node change
+const preservedMap = this.preservedPositionsMap;
+this.preservedPositionsMap = null;
+let savedPositions = this.loadNodePositions();
+
+if (preservedMap && this.frozen) {
+// Restore all nodes that existed before to their original positions
+const newNodeKeys: string[] = [];
+nodes.forEach((node) => {
+const id = node.id;
+const key = this.nodeIdToKeyMap[id];
+if (key && preservedMap[key]) {
+nodes.update({
+id: id,
+x: preservedMap[key].x,
+y: preservedMap[key].y,
+});
+} else if (key) {
+newNodeKeys.push(key);
+}
+});
+
+// Place new nodes at non-overlapping positions
+if (newNodeKeys.length > 0) {
+const occupiedPositions: { x: number; y: number }[] = [];
+nodes.forEach((node: any) => {
+const key = this.nodeIdToKeyMap[node.id];
+if (key && preservedMap[key]) {
+occupiedPositions.push({ x: preservedMap[key].x, y: preservedMap[key].y });
+}
+});
+
+for (const newKey of newNodeKeys) {
+const nodeId = Object.keys(this.nodeIdToKeyMap).find(
+(id) => this.nodeIdToKeyMap[parseInt(id, 10)] === newKey,
+);
+if (!nodeId) continue;
+
+// Find ALL connected neighbors and compute their centroid
+const numId = parseInt(nodeId, 10);
+const connectedEdges = edges.get().filter(
+(e: any) => e.from === numId || e.to === numId,
+);
+let sumX = 0;
+let sumY = 0;
+let neighborCount = 0;
+for (const ce of connectedEdges) {
+const otherId = (ce.from === numId ? ce.to : ce.from) as number;
+const otherKey = this.nodeIdToKeyMap[otherId];
+if (otherKey && preservedMap[otherKey]) {
+sumX += preservedMap[otherKey].x;
+sumY += preservedMap[otherKey].y;
+neighborCount++;
+}
+}
+
+// Place at centroid of all neighbors (minimizes total edge length)
+let finalX = neighborCount > 0 ? sumX / neighborCount : 0;
+let finalY = neighborCount > 0 ? sumY / neighborCount : 0;
+
+// Nudge to avoid overlapping existing nodes
+const nodeWidth = 250;
+const nodeHeight = 100;
+const padding = 20;
+let attempts = 0;
+const isOverlapping = () =>
+occupiedPositions.some(
+(p) =>
+Math.abs(p.x - finalX) < nodeWidth + padding &&
+Math.abs(p.y - finalY) < nodeHeight + padding,
+);
+
+// Try spiral outward from centroid to find clear spot
+if (isOverlapping()) {
+const step = nodeHeight + padding;
+let found = false;
+for (let ring = 1; ring <= 10 && !found; ring++) {
+// Try positions in a ring around the centroid
+const offsets = [
+{ dx: 0, dy: -ring * step },
+{ dx: 0, dy: ring * step },
+{ dx: -ring * (nodeWidth + padding), dy: 0 },
+{ dx: ring * (nodeWidth + padding), dy: 0 },
+{ dx: -ring * (nodeWidth + padding), dy: -ring * step },
+{ dx: ring * (nodeWidth + padding), dy: -ring * step },
+{ dx: -ring * (nodeWidth + padding), dy: ring * step },
+{ dx: ring * (nodeWidth + padding), dy: ring * step },
+];
+for (const off of offsets) {
+const testX = (neighborCount > 0 ? sumX / neighborCount : 0) + off.dx;
+const testY = (neighborCount > 0 ? sumY / neighborCount : 0) + off.dy;
+const testOverlaps = occupiedPositions.some(
+(p) =>
+Math.abs(p.x - testX) < nodeWidth + padding &&
+Math.abs(p.y - testY) < nodeHeight + padding,
+);
+if (!testOverlaps) {
+finalX = testX;
+finalY = testY;
+found = true;
+break;
+}
+}
+}
+}
+
+nodes.update({ id: numId, x: finalX, y: finalY });
+occupiedPositions.push({ x: finalX, y: finalY });
+}
+}
+
+this.network.fit();
+} else {
+// Normal flow: restore saved positions if frozen and they match
+if (
+this.frozen &&
+this.savedPositionsMatchGraph(savedPositions, result)
+) {
+nodes.forEach((node) => {
+const id = node.id;
+const key = this.nodeIdToKeyMap[id];
+if (key && savedPositions[key]) {
+nodes.update({
+id: id,
+x: savedPositions[key].x,
+y: savedPositions[key].y,
+});
+}
+});
+this.network.fit();
+}
+}
 
 					// Apply stored split nodes after layout/positions are set (before links, since links can be on split edges)
 					this.applyStoredSplits(nodes, edges, result);

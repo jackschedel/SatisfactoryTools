@@ -9,6 +9,7 @@ public controller = CustomGraphComponentController;
 public bindings = {
 result: '=',
 tabId: '<',
+intermediateItems: '<',
 };
 
 }
