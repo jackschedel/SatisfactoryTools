@@ -452,7 +452,34 @@ $border: 1px solid rgba(0, 0, 0, 0.125);
 }
 
 .input-group-text {
-	background-color: #dee2e6;
-	color: #495057;
-	border: 1px solid #4e5d6c;
+background-color: #dee2e6;
+color: #495057;
+border: 1px solid #4e5d6c;
+}
+
+.custom-graph-context-menu {
+  position: absolute;
+  z-index: 1000;
+  background-color: #2b3e50;
+  border: 1px solid #4e5d6c;
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 200px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+
+  .context-menu-item {
+    padding: 6px 14px;
+    color: #eee;
+    cursor: pointer;
+    white-space: nowrap;
+    font-size: 13px;
+
+    &:hover {
+      background-color: #4e5d6c;
+    }
+
+    .fas {
+      margin-right: 6px;
+    }
+  }
 }

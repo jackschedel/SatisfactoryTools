@@ -1,21 +1,51 @@
-<div class="custom-graph-toolbar p-2">
-<button class="btn btn-sm" ng-class="{'btn-warning': $ctrl.frozen, 'btn-outline-secondary': !$ctrl.frozen}" ng-click="$ctrl.toggleFreeze()">
-<span class="fas fa-fw" ng-class="{'fa-lock': $ctrl.frozen, 'fa-unlock': !$ctrl.frozen}"></span>
-{{$ctrl.frozen ? 'Unfreeze Graph' : 'Freeze Graph'}}
-</button>
-<button class="btn btn-sm btn-outline-info ml-2" ng-click="$ctrl.exportGraph()">
-<span class="fas fa-fw fa-copy"></span>
-Export Graph JSON
-</button>
-<button class="btn btn-sm btn-outline-primary ml-2" ng-click="$ctrl.autoArrange()">
-<span class="fas fa-fw fa-project-diagram"></span>
-Auto Arrange
-</button>
-<span ng-if="$ctrl.exportMessage" class="ml-2 text-success">
-<span class="fas fa-check"></span> {{$ctrl.exportMessage}}
-</span>
-<span ng-if="$ctrl.frozen" class="ml-2 text-warning">
-<span class="fas fa-info-circle"></span> Graph is frozen — solver input changes will not update this graph.
-</span>
+<div style="position: relative">
+	<div class="custom-graph-toolbar p-2">
+		<button
+			class="btn btn-sm"
+			ng-class="{'btn-warning': $ctrl.frozen, 'btn-outline-secondary': !$ctrl.frozen}"
+			ng-click="$ctrl.toggleFreeze()"
+		>
+			<span
+				class="fas fa-fw"
+				ng-class="{'fa-lock': $ctrl.frozen, 'fa-unlock': !$ctrl.frozen}"
+			></span>
+			{{$ctrl.frozen ? 'Unfreeze Graph' : 'Freeze Graph'}}
+		</button>
+		<button
+			class="btn btn-sm btn-outline-info ml-2"
+			ng-click="$ctrl.exportGraph()"
+		>
+			<span class="fas fa-fw fa-copy"></span>
+			Export Graph JSON
+		</button>
+		<button
+			class="btn btn-sm btn-outline-primary ml-2"
+			ng-click="$ctrl.autoArrange()"
+		>
+			<span class="fas fa-fw fa-project-diagram"></span>
+			Auto Arrange
+		</button>
+		<span ng-if="$ctrl.exportMessage" class="ml-2 text-success">
+			<span class="fas fa-check"></span> {{$ctrl.exportMessage}}
+		</span>
+		<span ng-if="$ctrl.frozen" class="ml-2 text-warning">
+			<span class="fas fa-info-circle"></span> Graph is frozen — solver input
+			changes will not update this graph.
+		</span>
+	</div>
+	<div class="custom-graph-container" style="width: 100%; height: 100%"></div>
+	<div
+		class="custom-graph-context-menu"
+		ng-if="$ctrl.contextMenu.visible"
+		ng-style="{left: $ctrl.contextMenu.x + 'px', top: $ctrl.contextMenu.y + 'px'}"
+	>
+		<div
+			class="context-menu-item"
+			ng-repeat="item in $ctrl.contextMenu.items"
+			ng-click="item.action(); $event.stopPropagation();"
+			ng-mousedown="$event.stopPropagation()"
+		>
+			<span class="fas fa-fw" ng-class="item.icon"></span> {{item.label}}
+		</div>
+	</div>
 </div>
-<div class="custom-graph-container" style="width: 100%; height: 100%;"></div>
