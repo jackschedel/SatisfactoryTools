@@ -684,20 +684,31 @@ export class CustomGraphComponentController implements IController {
 				});
 			}
 
-			// Check if it's a link node
-			const pairIndex = this.linkPairs.findIndex(
-				(p) => p.linkOutId === nodeId || p.linkInId === nodeId,
-			);
-			if (pairIndex !== -1) {
-				items.push({
-					label: "Recombine Link",
-					icon: "fa-unlink",
-					action: () => {
-						this.hideContextMenu();
-						this.removeLinkPair(pairIndex, nodes, edges);
-					},
-				});
-			}
+      // Check if it's a link node
+      const pairIndex = this.linkPairs.findIndex(
+        (p) => p.linkOutId === nodeId || p.linkInId === nodeId,
+      );
+      if (pairIndex !== -1) {
+        // Only show "Recombine Link" when a single link node is selected,
+        // or when exactly the 2 ends of the same link pair are selected.
+        const pair = this.linkPairs[pairIndex];
+        const isSingleSelect = selectedNodeIds.length <= 1;
+        const isSamePairBothEnds =
+          selectedNodeIds.length === 2 &&
+          selectedNodeIds.indexOf(pair.linkOutId) !== -1 &&
+          selectedNodeIds.indexOf(pair.linkInId) !== -1;
+
+        if (isSingleSelect || isSamePairBothEnds) {
+          items.push({
+            label: "Recombine Link",
+            icon: "fa-unlink",
+            action: () => {
+              this.hideContextMenu();
+              this.removeLinkPair(pairIndex, nodes, edges);
+            },
+          });
+        }
+      }
 
 			// Check if it's a RecipeNode
 			const graphNode = result.graph.nodes.find((n) => n.id === nodeId);
@@ -806,33 +817,22 @@ export class CustomGraphComponentController implements IController {
 				}
 			}
 
-			// Combine links option when multiple link nodes are selected
-			if (selectedNodeIds.length >= 2) {
-				const selectedOutPairs: ILinkPair[] = [];
-				const selectedInPairs: ILinkPair[] = [];
-				for (const id of selectedNodeIds) {
-					const pair = this.linkPairs.find((p) => p.linkOutId === id);
-					if (pair) {
-						selectedOutPairs.push(pair);
-					}
-					const inPair = this.linkPairs.find((p) => p.linkInId === id);
-					if (inPair) {
-						selectedInPairs.push(inPair);
-					}
-				}
-				if (selectedOutPairs.length >= 2 || selectedInPairs.length >= 2) {
-					items.push({
-						label: "Combine Selected Link Nodes",
-						icon: "fa-object-group",
-						action: () => {
-							this.hideContextMenu();
-							this.handleCombineLinks(selectedNodeIds, nodes, edges, result);
-							this.multiSelectedNodes = [];
-						},
-					});
-				}
-			}
-		} else if (edgeAtClick != null) {
+      // Combine links option when multiple link nodes are selected
+      if (selectedNodeIds.length >= 2) {
+        const selectedLinkPairs = this.getSelectedLinkPairs(selectedNodeIds);
+        if (this.hasCombinableGroups(selectedLinkPairs)) {
+          items.push({
+            label: "Combine Selected Link Nodes",
+            icon: "fa-object-group",
+            action: () => {
+              this.hideContextMenu();
+              this.handleCombineLinks(selectedNodeIds, nodes, edges, result);
+              this.multiSelectedNodes = [];
+            },
+          });
+        }
+      }
+    } else if (edgeAtClick != null) {
 			// --- Right-clicked on an edge ---
 			const visEdgeId = edgeAtClick;
 
@@ -890,32 +890,21 @@ export class CustomGraphComponentController implements IController {
 			}
 		}
 
-		// If multi-selected link nodes, show combine option even when clicking on background
-		if (items.length === 0 && selectedNodeIds.length >= 2) {
-			const selectedOutPairs: ILinkPair[] = [];
-			const selectedInPairs: ILinkPair[] = [];
-			for (const id of selectedNodeIds) {
-				const pair = this.linkPairs.find((p) => p.linkOutId === id);
-				if (pair) {
-					selectedOutPairs.push(pair);
-				}
-				const inPair = this.linkPairs.find((p) => p.linkInId === id);
-				if (inPair) {
-					selectedInPairs.push(inPair);
-				}
-			}
-			if (selectedOutPairs.length >= 2 || selectedInPairs.length >= 2) {
-				items.push({
-					label: "Combine Selected Link Nodes",
-					icon: "fa-object-group",
-					action: () => {
-						this.hideContextMenu();
-						this.handleCombineLinks(selectedNodeIds, nodes, edges, result);
-						this.multiSelectedNodes = [];
-					},
-				});
-			}
-		}
+    // If multi-selected link nodes, show combine option even when clicking on background
+    if (items.length === 0 && selectedNodeIds.length >= 2) {
+      const selectedLinkPairs = this.getSelectedLinkPairs(selectedNodeIds);
+      if (this.hasCombinableGroups(selectedLinkPairs)) {
+        items.push({
+          label: "Combine Selected Link Nodes",
+          icon: "fa-object-group",
+          action: () => {
+            this.hideContextMenu();
+            this.handleCombineLinks(selectedNodeIds, nodes, edges, result);
+            this.multiSelectedNodes = [];
+          },
+        });
+      }
+    }
 
 		if (items.length === 0) {
 			return;
@@ -1477,90 +1466,135 @@ export class CustomGraphComponentController implements IController {
 
 	// ==================== Combined Link Methods ====================
 
-	private handleCombineLinks(
-		selectedNodeIds: number[],
-		nodes: DataSet<IVisNode>,
-		edges: DataSet<IVisEdge>,
-		result: ProductionResult,
-	): void {
-		// Find which link pairs correspond to the selected nodes
-		const selectedOutPairs: ILinkPair[] = [];
-		const selectedInPairs: ILinkPair[] = [];
+  /**
+   * Check whether a set of link pairs contains at least one combinable group
+   * (2+ pairs sharing the same item and destination key).
+   */
+  private hasCombinableGroups(pairs: ILinkPair[]): boolean {
+    if (pairs.length < 2) {
+      return false;
+    }
+    // Check for groups sharing same item + toNodeKey (multiple sources → one dest)
+    const toCounts: { [key: string]: number } = {};
+    // Check for groups sharing same item + fromNodeKey (one source → multiple dests)
+    const fromCounts: { [key: string]: number } = {};
+    for (const pair of pairs) {
+      const toKey =
+        pair.descriptor.itemClassName + "||to||" + pair.descriptor.toNodeKey;
+      toCounts[toKey] = (toCounts[toKey] || 0) + 1;
+      const fromKey =
+        pair.descriptor.itemClassName + "||from||" + pair.descriptor.fromNodeKey;
+      fromCounts[fromKey] = (fromCounts[fromKey] || 0) + 1;
+    }
+    for (const key in toCounts) {
+      if (toCounts.hasOwnProperty(key) && toCounts[key] >= 2) {
+        return true;
+      }
+    }
+    for (const key in fromCounts) {
+      if (fromCounts.hasOwnProperty(key) && fromCounts[key] >= 2) {
+        return true;
+      }
+    }
+    return false;
+  }
 
-		for (const nodeId of selectedNodeIds) {
-			const pair = this.linkPairs.find((p) => p.linkOutId === nodeId);
-			if (pair) {
-				selectedOutPairs.push(pair);
-				continue;
-			}
-			const inPair = this.linkPairs.find((p) => p.linkInId === nodeId);
-			if (inPair) {
-				selectedInPairs.push(inPair);
-			}
-		}
+  /**
+   * Get unique link pairs corresponding to the selected node IDs.
+   */
+  private getSelectedLinkPairs(selectedNodeIds: number[]): ILinkPair[] {
+    const pairSet = new Set<ILinkPair>();
+    for (const nodeId of selectedNodeIds) {
+      const pair = this.linkPairs.find(
+        (p) => p.linkOutId === nodeId || p.linkInId === nodeId,
+      );
+      if (pair) {
+        pairSet.add(pair);
+      }
+    }
+    return Array.from(pairSet);
+  }
 
-		// Try to combine Link Out nodes
-		if (selectedOutPairs.length >= 2) {
-			this.tryCombinePairs(selectedOutPairs, "out", nodes, edges, result);
-			return;
-		}
+  private handleCombineLinks(
+    selectedNodeIds: number[],
+    nodes: DataSet<IVisNode>,
+    edges: DataSet<IVisEdge>,
+    result: ProductionResult,
+  ): void {
+    const selectedPairs = this.getSelectedLinkPairs(selectedNodeIds);
+    if (selectedPairs.length >= 2) {
+      this.tryCombinePairs(selectedPairs, nodes, edges, result);
+    }
+  }
 
-		// Try to combine Link In nodes
-		if (selectedInPairs.length >= 2) {
-			this.tryCombinePairs(selectedInPairs, "in", nodes, edges, result);
-			return;
-		}
-	}
+  private tryCombinePairs(
+    pairs: ILinkPair[],
+    nodes: DataSet<IVisNode>,
+    edges: DataSet<IVisEdge>,
+    result: ProductionResult,
+  ): void {
+    // Group by item and destination key (toNodeKey) — "out" type: multiple sources → one dest
+    const toGroups: { [key: string]: ILinkPair[] } = {};
+    // Group by item and source key (fromNodeKey) — "in" type: one source → multiple dests
+    const fromGroups: { [key: string]: ILinkPair[] } = {};
 
-	private tryCombinePairs(
-		pairs: ILinkPair[],
-		type: "out" | "in",
-		nodes: DataSet<IVisNode>,
-		edges: DataSet<IVisEdge>,
-		result: ProductionResult,
-	): void {
-		// Group by item and source key
-		// For OUT: group by itemClassName and toNodeKey (same destination)
-		// For IN: group by itemClassName and fromNodeKey (same source)
-		const groups: { [key: string]: ILinkPair[] } = {};
+    for (const pair of pairs) {
+      const toKey =
+        pair.descriptor.itemClassName + "||" + pair.descriptor.toNodeKey;
+      if (!toGroups[toKey]) {
+        toGroups[toKey] = [];
+      }
+      toGroups[toKey].push(pair);
 
-		for (const pair of pairs) {
-			let groupKey: string;
-			if (type === "out") {
-				groupKey =
-					pair.descriptor.itemClassName + "||" + pair.descriptor.toNodeKey;
-			} else {
-				groupKey =
-					pair.descriptor.itemClassName + "||" + pair.descriptor.fromNodeKey;
-			}
-			if (!groups[groupKey]) {
-				groups[groupKey] = [];
-			}
-			groups[groupKey].push(pair);
-		}
+      const fromKey =
+        pair.descriptor.itemClassName + "||" + pair.descriptor.fromNodeKey;
+      if (!fromGroups[fromKey]) {
+        fromGroups[fromKey] = [];
+      }
+      fromGroups[fromKey].push(pair);
+    }
 
-		// Combine each group that has 2+ pairs
-		for (const key in groups) {
-			if (groups.hasOwnProperty(key) && groups[key].length >= 2) {
-				this.combineLinksGroup(groups[key], type, nodes, edges, result);
-			}
-		}
-	}
+    // Prefer whichever grouping yields a combinable group; try "out" first
+    const combined = new Set<ILinkPair>();
 
-	private combineLinksGroup(
-		pairs: ILinkPair[],
-		type: "out" | "in",
-		nodes: DataSet<IVisNode>,
-		edges: DataSet<IVisEdge>,
-		result: ProductionResult,
-	): void {
-		const itemClassName = pairs[0].descriptor.itemClassName;
-		const itemName = model.getItem(itemClassName).prototype.name;
-		const sourceKey =
-			type === "out"
-				? pairs[0].descriptor.toNodeKey
-				: pairs[0].descriptor.fromNodeKey;
-		const recipeCount = pairs.length;
+    for (const key in toGroups) {
+      if (toGroups.hasOwnProperty(key) && toGroups[key].length >= 2) {
+        const groupPairs = toGroups[key].filter((p) => !combined.has(p));
+        if (groupPairs.length >= 2) {
+          this.combineLinksGroup(groupPairs, "out", nodes, edges, result);
+          for (const p of groupPairs) {
+            combined.add(p);
+          }
+        }
+      }
+    }
+
+    for (const key in fromGroups) {
+      if (fromGroups.hasOwnProperty(key) && fromGroups[key].length >= 2) {
+        const groupPairs = fromGroups[key].filter((p) => !combined.has(p));
+        if (groupPairs.length >= 2) {
+          this.combineLinksGroup(groupPairs, "in", nodes, edges, result);
+          for (const p of groupPairs) {
+            combined.add(p);
+          }
+        }
+      }
+    }
+  }
+
+  private combineLinksGroup(
+    pairs: ILinkPair[],
+    type: "out" | "in",
+    nodes: DataSet<IVisNode>,
+    edges: DataSet<IVisEdge>,
+    result: ProductionResult,
+  ): void {
+    const itemClassName = pairs[0].descriptor.itemClassName;
+    const itemName = model.getItem(itemClassName).prototype.name;
+    const sourceKey = type === "out"
+      ? pairs[0].descriptor.toNodeKey
+      : pairs[0].descriptor.fromNodeKey;
+    const recipeCount = pairs.length;
 
 		// Gather edge data from each pair before removal
 		const pairEdgeData: {
@@ -1609,22 +1643,11 @@ export class CustomGraphComponentController implements IController {
 			return;
 		}
 
-		// Get position of first pair's relevant node for placement
-		const firstPair = pairs[0];
-		let combinedOutPos: { x: number; y: number };
-		let combinedInPos: { x: number; y: number };
-
-		if (type === "out") {
-			const outPos = this.network.getPositions([firstPair.linkOutId]);
-			const inPos = this.network.getPositions([firstPair.linkInId]);
-			combinedOutPos = outPos[firstPair.linkOutId] || { x: 0, y: 0 };
-			combinedInPos = inPos[firstPair.linkInId] || { x: 0, y: 0 };
-		} else {
-			const outPos = this.network.getPositions([firstPair.linkOutId]);
-			const inPos = this.network.getPositions([firstPair.linkInId]);
-			combinedOutPos = outPos[firstPair.linkOutId] || { x: 0, y: 0 };
-			combinedInPos = inPos[firstPair.linkInId] || { x: 0, y: 0 };
-		}
+// Get position of first pair's relevant node for placement
+const firstPair = pairs[0];
+const posData = this.network.getPositions([firstPair.linkOutId, firstPair.linkInId]);
+const combinedOutPos = posData[firstPair.linkOutId] || { x: 0, y: 0 };
+const combinedInPos = posData[firstPair.linkInId] || { x: 0, y: 0 };
 
 		// Remove all the individual link pairs (nodes and edges)
 		const removedPairs: ILinkPair[] = [];
@@ -1654,42 +1677,40 @@ export class CustomGraphComponentController implements IController {
 			? getNodeDisplayName(sourceGraphNode)
 			: sourceKey;
 
-		let outLabel: string;
-		let inLabel: string;
+let outLabel: string;
+let inLabel: string;
 
-		if (type === "out") {
-			// Selected were Link Out nodes with same "To" destination
-			outLabel =
-				"<b>Link Out: " +
-				itemName +
-				"</b>\n<i>To: " +
-				sourceName +
-				"</i>\n" +
-				amountStr;
-			inLabel =
-				"<b>Link In: " +
-				itemName +
-				"</b>\n<i>From: (" +
-				recipeCount +
-				" recipes)</i>\n" +
-				amountStr;
-		} else {
-			// Selected were Link In nodes with same "From" source
-			outLabel =
-				"<b>Link Out: " +
-				itemName +
-				"</b>\n<i>To: (" +
-				recipeCount +
-				" recipes)</i>\n" +
-				amountStr;
-			inLabel =
-				"<b>Link In: " +
-				itemName +
-				"</b>\n<i>From: " +
-				sourceName +
-				"</i>\n" +
-				amountStr;
-		}
+if (type === "out") {
+outLabel =
+"<b>Link Out: " +
+itemName +
+"</b>\n<i>To: " +
+sourceName +
+"</i>\n" +
+amountStr;
+inLabel =
+"<b>Link In: " +
+itemName +
+"</b>\n<i>From: (" +
+recipeCount +
+" sources)</i>\n" +
+amountStr;
+} else {
+outLabel =
+"<b>Link Out: " +
+itemName +
+"</b>\n<i>To: (" +
+recipeCount +
+" destinations)</i>\n" +
+amountStr;
+inLabel =
+"<b>Link In: " +
+itemName +
+"</b>\n<i>From: " +
+sourceName +
+"</i>\n" +
+amountStr;
+}
 
 		// Create combined nodes
 		const combinedOutId = this.combinedNodeIdCounter++;
@@ -1740,71 +1761,71 @@ export class CustomGraphComponentController implements IController {
 			color: "rgba(238, 238, 238, 1)",
 		};
 
-		if (type === "out") {
-			// Multiple sources → combined Link Out node
-			for (const data of pairEdgeData) {
-				const edgeId = this.combinedEdgeIdCounter++;
-				combinedEdgeIds.push(edgeId);
-				edges.add({
-					id: edgeId,
-					from: data.fromVisId,
-					to: combinedOutId,
-					label: data.outLabel,
-					color: linkEdgeColor,
-					font: linkEdgeFont,
-				} as any);
-			}
-			// Combined Link In node → single target
-			const targetId = pairEdgeData[0].toVisId;
-			const inEdgeId = this.combinedEdgeIdCounter++;
-			combinedEdgeIds.push(inEdgeId);
-			edges.add({
-				id: inEdgeId,
-				from: combinedInId,
-				to: targetId,
-				label: itemName + "\n" + amountStr,
-				color: linkEdgeColor,
-				font: linkEdgeFont,
-			} as any);
-		} else {
-			// Single source → combined Link Out node
-			const sourceId = pairEdgeData[0].fromVisId;
-			const outEdgeId = this.combinedEdgeIdCounter++;
-			combinedEdgeIds.push(outEdgeId);
-			edges.add({
-				id: outEdgeId,
-				from: sourceId,
-				to: combinedOutId,
-				label: itemName + "\n" + amountStr,
-				color: linkEdgeColor,
-				font: linkEdgeFont,
-			} as any);
-			// Combined Link In node → multiple targets
-			for (const data of pairEdgeData) {
-				const edgeId = this.combinedEdgeIdCounter++;
-				combinedEdgeIds.push(edgeId);
-				edges.add({
-					id: edgeId,
-					from: combinedInId,
-					to: data.toVisId,
-					label: data.inLabel,
-					color: linkEdgeColor,
-					font: linkEdgeFont,
-				} as any);
-			}
-		}
+if (type === "out") {
+// Multiple sources → combined Link Out node
+for (const data of pairEdgeData) {
+const edgeId = this.combinedEdgeIdCounter++;
+combinedEdgeIds.push(edgeId);
+edges.add({
+id: edgeId,
+from: data.fromVisId,
+to: combinedOutId,
+label: data.outLabel,
+color: linkEdgeColor,
+font: linkEdgeFont,
+} as any);
+}
+// Combined Link In node → single target
+const targetId = pairEdgeData[0].toVisId;
+const inEdgeId = this.combinedEdgeIdCounter++;
+combinedEdgeIds.push(inEdgeId);
+edges.add({
+id: inEdgeId,
+from: combinedInId,
+to: targetId,
+label: itemName + "\n" + amountStr,
+color: linkEdgeColor,
+font: linkEdgeFont,
+} as any);
+} else {
+// Single source → combined Link Out node
+const sourceId = pairEdgeData[0].fromVisId;
+const outEdgeId = this.combinedEdgeIdCounter++;
+combinedEdgeIds.push(outEdgeId);
+edges.add({
+id: outEdgeId,
+from: sourceId,
+to: combinedOutId,
+label: itemName + "\n" + amountStr,
+color: linkEdgeColor,
+font: linkEdgeFont,
+} as any);
+// Combined Link In node → multiple targets
+for (const data of pairEdgeData) {
+const edgeId = this.combinedEdgeIdCounter++;
+combinedEdgeIds.push(edgeId);
+edges.add({
+id: edgeId,
+from: combinedInId,
+to: data.toVisId,
+label: data.inLabel,
+color: linkEdgeColor,
+font: linkEdgeFont,
+} as any);
+}
+}
 
-		const descriptor: ICombinedLinkDescriptor = {
-			type: type,
-			itemClassName: itemClassName,
-			sourceKey: sourceKey,
-			originalDescriptors: removedPairs.map((p) => ({ ...p.descriptor })),
-		};
+const descriptor: ICombinedLinkDescriptor = {
+type: type,
+itemClassName: itemClassName,
+sourceKey: sourceKey,
+originalDescriptors: removedPairs.map((p) => ({ ...p.descriptor })),
+};
 
-		const group: ICombinedLinkGroup = {
-			type: type,
-			itemClassName: itemClassName,
-			sourceKey: sourceKey,
+const group: ICombinedLinkGroup = {
+type: type,
+itemClassName: itemClassName,
+sourceKey: sourceKey,
 			originalPairs: removedPairs,
 			combinedOutId: combinedOutId,
 			combinedInId: combinedInId,
@@ -1940,14 +1961,14 @@ export class CustomGraphComponentController implements IController {
 				continue;
 			}
 
-			// Combine them
-			this.combineLinksGroup(
-				matchingPairs,
-				descriptor.type,
-				nodes,
-				edges,
-				result,
-			);
+// Combine them
+this.combineLinksGroup(
+matchingPairs,
+descriptor.type,
+nodes,
+edges,
+result,
+);
 
 			// Restore saved positions for the combined nodes
 			const group = this.combinedLinkGroups[this.combinedLinkGroups.length - 1];
