@@ -1110,13 +1110,15 @@ this.network.fit();
 				});
 			}
 
-			// Check if it's an IntermediateNode (only when single-select)
-			if (
-				graphNode &&
-				graphNode instanceof IntermediateNode &&
-				!isMultiSelect
-			) {
-				const intermediateKey = getNodeKey(graphNode);
+// Check if it's an IntermediateNode, InputNode, or MinerNode (only when single-select)
+if (
+graphNode &&
+(graphNode instanceof IntermediateNode ||
+graphNode instanceof InputNode ||
+graphNode instanceof MinerNode) &&
+!isMultiSelect
+) {
+const intermediateKey = getNodeKey(graphNode);
 				const connectedEdges = result.graph.edges.filter(
 					(e) => e.from.id === nodeId || e.to.id === nodeId,
 				);
@@ -1203,11 +1205,26 @@ this.network.fit();
 					this.multiSelectedNodes = [];
 				}
 
-				// Don't allow creating link on a link edge
-				const isLinkEdge = this.linkPairs.some(
-					(p) => p.outEdgeId === visEdgeId || p.inEdgeId === visEdgeId,
-				);
-				if (!isLinkEdge) {
+        // Don't allow creating link on a link edge
+        const isLinkEdge = this.linkPairs.some(
+            (p) => p.outEdgeId === visEdgeId || p.inEdgeId === visEdgeId,
+        );
+        if (isLinkEdge) {
+            // Offer to recombine the link pair this edge belongs to
+            const linkPairIndex = this.linkPairs.findIndex(
+                (p) => p.outEdgeId === visEdgeId || p.inEdgeId === visEdgeId,
+            );
+            if (linkPairIndex !== -1) {
+                items.push({
+                    label: "Recombine Link",
+                    icon: "fa-unlink",
+                    action: () => {
+                        this.hideContextMenu();
+                        this.removeLinkPair(linkPairIndex, nodes, edges);
+                    },
+                });
+            }
+        } else if (!isLinkEdge) {
 					// Check if it's a split edge
 					const splitGroup = this.splitGroups.find(
 						(g) => g.splitEdgeIds.indexOf(visEdgeId) !== -1,
@@ -1854,8 +1871,13 @@ this.network.fit();
 			return;
 		}
 
-		// Check if it's an IntermediateNode — auto-create links for all its edges
-		if (graphNode && graphNode instanceof IntermediateNode) {
+// Check if it's an IntermediateNode, InputNode, or MinerNode — auto-create links for all its edges
+if (
+graphNode &&
+(graphNode instanceof IntermediateNode ||
+graphNode instanceof InputNode ||
+graphNode instanceof MinerNode)
+) {
 			const connectedEdges = result.graph.edges.filter(
 				(e) => e.from.id === nodeId || e.to.id === nodeId,
 			);
