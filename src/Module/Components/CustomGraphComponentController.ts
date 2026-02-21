@@ -891,19 +891,21 @@ export class CustomGraphComponentController implements IController {
 					selectedNodeIds.indexOf(combinedGroup.combinedOutId) !== -1 &&
 					selectedNodeIds.indexOf(combinedGroup.combinedInId) !== -1;
 
-				// "Go to Other Side" — navigate viewport to the paired combined link node
-				const isCombinedOutSide = combinedGroup.combinedOutId === nodeId;
-				const otherCombinedNodeId = isCombinedOutSide
-					? combinedGroup.combinedInId
-					: combinedGroup.combinedOutId;
-				items.push({
-					label: isCombinedOutSide ? "Go to Link In" : "Go to Link Out",
-					icon: "fa-crosshairs",
-					action: () => {
-						this.hideContextMenu();
-						this.moveViewportToNode(otherCombinedNodeId);
-					},
-				});
+            // "Go to Other Side" — navigate viewport to the paired combined link node
+            const isCombinedOutSide = combinedGroup.combinedOutId === nodeId;
+            const otherCombinedNodeId = isCombinedOutSide
+              ? combinedGroup.combinedInId
+              : combinedGroup.combinedOutId;
+            if (!isMultiSelect) {
+              items.push({
+                label: isCombinedOutSide ? "Go to Link In" : "Go to Link Out",
+                icon: "fa-crosshairs",
+                action: () => {
+                  this.hideContextMenu();
+                  this.moveViewportToNode(otherCombinedNodeId);
+                },
+              });
+            }
 
 				if (!isMultiSelect || isBothEndsSelected) {
 					items.push({
@@ -951,17 +953,19 @@ export class CustomGraphComponentController implements IController {
 					selectedNodeIds.indexOf(pair.linkOutId) !== -1 &&
 					selectedNodeIds.indexOf(pair.linkInId) !== -1;
 
-				// "Go to Other Side" — navigate viewport to the paired link node
-				const isOutSide = pair.linkOutId === nodeId;
-				const otherLinkNodeId = isOutSide ? pair.linkInId : pair.linkOutId;
-				items.push({
-					label: isOutSide ? "Go to Link In" : "Go to Link Out",
-					icon: "fa-crosshairs",
-					action: () => {
-						this.hideContextMenu();
-						this.moveViewportToNode(otherLinkNodeId);
-					},
-				});
+            // "Go to Other Side" — navigate viewport to the paired link node
+            const isOutSide = pair.linkOutId === nodeId;
+            const otherLinkNodeId = isOutSide ? pair.linkInId : pair.linkOutId;
+            if (!isMultiSelect) {
+              items.push({
+                label: isOutSide ? "Go to Link In" : "Go to Link Out",
+                icon: "fa-crosshairs",
+                action: () => {
+                  this.hideContextMenu();
+                  this.moveViewportToNode(otherLinkNodeId);
+                },
+              });
+            }
 
 				if (isSingleSelect || isSamePairBothEnds) {
 					items.push({
@@ -2591,9 +2595,17 @@ visNodeIds.push(linkNodeId);
 		edges: DataSet<IVisEdge>,
 		result: ProductionResult,
 	): void {
-		const group = this.combinedLinkGroups[groupIndex];
+    const group = this.combinedLinkGroups[groupIndex];
 
-		// Remove combined edges
+    // Capture combined node positions before removal for radial placement of uncombined nodes
+    const combinedPositions = this.network.getPositions([
+      group.combinedOutId,
+      group.combinedInId,
+    ]);
+    const combinedOutPos = combinedPositions[group.combinedOutId] || { x: 0, y: 0 };
+    const combinedInPos = combinedPositions[group.combinedInId] || { x: 0, y: 0 };
+
+    // Remove combined edges
 		for (const edgeId of group.combinedEdgeIds) {
 			edges.remove(edgeId);
 		}
@@ -2602,8 +2614,12 @@ visNodeIds.push(linkNodeId);
 		nodes.remove(group.combinedOutId);
 		nodes.remove(group.combinedInId);
 
-		// Recreate the individual link pairs
-		for (const originalPair of group.originalPairs) {
+    // Track pairs needing radial positioning (those without saved positions)
+    const pairsNeedingOutPos: ILinkPair[] = [];
+    const pairsNeedingInPos: ILinkPair[] = [];
+
+    // Recreate the individual link pairs
+    for (const originalPair of group.originalPairs) {
 			const desc = originalPair.descriptor;
 
 			// Find the matching graph edge
@@ -2625,26 +2641,36 @@ visNodeIds.push(linkNodeId);
 
 			// Handle split-edge links: the original recipe node doesn't exist in the vis DataSet,
 			// so we need to find the split node and the vis edge connecting it.
-			if (desc.splitRecipeKey != null && desc.splitNodeIndex != null) {
-				// Restore the split edge into the DataSet first — it was consumed by createLinkPair
-				// when the link was originally created, and combineLinksGroup didn't restore it.
-				// applyStoredSplitEdgeLink expects to find the split edge in the DataSet.
-				if (originalPair.originalEdgeData) {
-					edges.add(originalPair.originalEdgeData);
-				}
-				const applied = this.applyStoredSplitEdgeLink(
-					desc,
-					graphEdge,
-					nodes,
-					edges,
-					result,
-					originalPair.amount,
-				);
-				if (!applied) {
-					// applyStoredSplitEdgeLink failed; the edge we just restored stays as-is
-				}
-				continue;
-			}
+      if (desc.splitRecipeKey != null && desc.splitNodeIndex != null) {
+        // Restore the split edge into the DataSet first — it was consumed by createLinkPair
+        // when the link was originally created, and combineLinksGroup didn't restore it.
+        // applyStoredSplitEdgeLink expects to find the split edge in the DataSet.
+        if (originalPair.originalEdgeData) {
+          edges.add(originalPair.originalEdgeData);
+        }
+        const pairCountBefore = this.linkPairs.length;
+        const applied = this.applyStoredSplitEdgeLink(
+          desc,
+          graphEdge,
+          nodes,
+          edges,
+          result,
+          originalPair.amount,
+        );
+        if (applied && this.linkPairs.length > pairCountBefore) {
+          const newPair = this.linkPairs[this.linkPairs.length - 1];
+          if (!desc.linkOutPos) {
+            pairsNeedingOutPos.push(newPair);
+          }
+          if (!desc.linkInPos) {
+            pairsNeedingInPos.push(newPair);
+          }
+        }
+        if (!applied) {
+          // applyStoredSplitEdgeLink failed; the edge we just restored stays as-is
+        }
+        continue;
+      }
 
 			const positions = this.network.getPositions([
 				graphEdge.from.id,
@@ -2672,25 +2698,55 @@ visNodeIds.push(linkNodeId);
 				getNodeDisplayName(graphEdge.to),
 			);
 
-			// Restore saved positions if available
-			if (desc.linkOutPos) {
-				nodes.update({
-					id: newPair.linkOutId,
-					x: desc.linkOutPos.x,
-					y: desc.linkOutPos.y,
-				});
-			}
-			if (desc.linkInPos) {
-				nodes.update({
-					id: newPair.linkInId,
-					x: desc.linkInPos.x,
-					y: desc.linkInPos.y,
-				});
-			}
-		}
+      // Restore saved positions if available, otherwise track for radial placement
+      if (desc.linkOutPos) {
+        nodes.update({
+          id: newPair.linkOutId,
+          x: desc.linkOutPos.x,
+          y: desc.linkOutPos.y,
+        });
+      } else {
+        pairsNeedingOutPos.push(newPair);
+      }
+      if (desc.linkInPos) {
+        nodes.update({
+          id: newPair.linkInId,
+          x: desc.linkInPos.x,
+          y: desc.linkInPos.y,
+        });
+      } else {
+        pairsNeedingInPos.push(newPair);
+      }
+    }
 
-		// Remove from tracking
-		this.combinedLinkGroups.splice(groupIndex, 1);
+    // Position pairs without saved positions radially around old combined node positions
+    if (pairsNeedingOutPos.length > 0) {
+      const count = pairsNeedingOutPos.length;
+      const radius = count === 1 ? 0 : 80;
+      for (let i = 0; i < count; i++) {
+        const angle = (2 * Math.PI * i) / count - Math.PI / 2;
+        nodes.update({
+          id: pairsNeedingOutPos[i].linkOutId,
+          x: combinedOutPos.x + radius * Math.cos(angle),
+          y: combinedOutPos.y + radius * Math.sin(angle),
+        });
+      }
+    }
+    if (pairsNeedingInPos.length > 0) {
+      const count = pairsNeedingInPos.length;
+      const radius = count === 1 ? 0 : 80;
+      for (let i = 0; i < count; i++) {
+        const angle = (2 * Math.PI * i) / count - Math.PI / 2;
+        nodes.update({
+          id: pairsNeedingInPos[i].linkInId,
+          x: combinedInPos.x + radius * Math.cos(angle),
+          y: combinedInPos.y + radius * Math.sin(angle),
+        });
+      }
+    }
+
+    // Remove from tracking
+    this.combinedLinkGroups.splice(groupIndex, 1);
 
 		this.saveCombinedLinks();
 		this.saveLinkNodes();
