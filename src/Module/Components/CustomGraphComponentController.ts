@@ -1699,6 +1699,19 @@ const intermediateKey = getNodeKey(graphNode);
 			splitNodeIndex: splitNodeIndex,
 		};
 
+		// Detect if the other endpoint is a split node of another split group
+		// so that applyStoredSplitEdgeLink can resolve the correct vis node ID on restore
+		const otherSideVisId = isSplitFrom ? toId : fromId;
+		for (const sg of this.splitGroups) {
+			if (sg === splitGroup) continue;
+			const otherIdx = sg.splitNodeIds.indexOf(otherSideVisId);
+			if (otherIdx !== -1) {
+				descriptor.otherSplitRecipeKey = sg.descriptor.recipeNodeKey;
+				descriptor.otherSplitNodeIndex = otherIdx;
+				break;
+			}
+		}
+
 		// Check if this exact split-edge link already exists
 		if (
 			this.linkPairs.some(
@@ -1990,7 +2003,7 @@ graphNode instanceof MinerNode)
 			"</i>\n" +
 			amountStr;
 
-		const linkNodeColor = {
+		const defaultLinkNodeColor = {
 			border: "rgba(0, 0, 0, 0)",
 			background: "rgba(50, 160, 160, 1)",
 			highlight: {
@@ -2002,13 +2015,19 @@ graphNode instanceof MinerNode)
 			color: "rgba(238, 238, 238, 1)",
 		};
 
+		// Link Out (attached to FROM) matches color of the TO node (other side)
+		// Link In (attached to TO) matches color of the FROM node (other side)
+		// Exception: if the other side is a recipe node, use the default blue
+		const linkOutColor = this.getOtherSideLinkColor(descriptor.toNodeKey, toVisId, nodes, defaultLinkNodeColor);
+		const linkInColor = this.getOtherSideLinkColor(descriptor.fromNodeKey, fromVisId, nodes, defaultLinkNodeColor);
+
 		// Add both nodes at the midpoint initially so vis-network computes their sizes
 		nodes.add({
 			id: linkOutId,
 			label: outLabel,
 			x: midX,
 			y: midY,
-			color: linkNodeColor,
+			color: linkOutColor,
 			font: linkNodeFont,
 		});
 
@@ -2017,7 +2036,7 @@ graphNode instanceof MinerNode)
 			label: inLabel,
 			x: midX,
 			y: midY,
-			color: linkNodeColor,
+			color: linkInColor,
 			font: linkNodeFont,
 		});
 
@@ -2100,6 +2119,27 @@ graphNode instanceof MinerNode)
 		return pair;
 	}
 
+	/**
+	 * Determine the color a link node should use based on the "other side" of the link.
+	 * Each link node matches the color of the node on the far end of the link gap.
+	 * Exception: if the other side is a recipe node, use the default link color.
+	 */
+	private getOtherSideLinkColor(
+		otherNodeKey: string,
+		otherVisId: number,
+		nodes: DataSet<IVisNode>,
+		defaultColor: any,
+	): any {
+		if (otherNodeKey.startsWith("recipe:")) {
+			return defaultColor;
+		}
+		const nodeData = nodes.get(otherVisId) as any;
+		if (nodeData && nodeData.color) {
+			return nodeData.color;
+		}
+		return defaultColor;
+	}
+
 	// ==================== Combined Link Methods ====================
 
 	/**
@@ -2141,6 +2181,40 @@ graphNode instanceof MinerNode)
 		}
 
 		return effectiveCount;
+	}
+
+	/**
+	 * Count how many vis edges a single graph edge effectively represents,
+	 * accounting for the OTHER endpoint being in a split group. When the
+	 * other endpoint has been split, non-primary edges are duplicated to
+	 * all split nodes, so 1 graph edge becomes N vis edges.
+	 *
+	 * @param isFromNode true when the node we're checking is the FROM side
+	 *                   of the edge (output direction)
+	 */
+	private countVisEdgesForSplitEligibility(
+		graphEdge: any,
+		isFromNode: boolean,
+	): number {
+		const otherNodeId = isFromNode ? graphEdge.to.id : graphEdge.from.id;
+		const otherSplitGroup = this.splitGroups.find(
+			(g) => g.originalNodeId === otherNodeId,
+		);
+		if (!otherSplitGroup) {
+			return 1;
+		}
+
+		// Determine if this edge is a "primary" edge in the other split group.
+		// Primary edges are in the split direction AND carry the split item;
+		// they map 1:1 to split nodes. Non-primary edges are duplicated to
+		// all split nodes.
+		const edgeDirForOther = isFromNode ? "input" : "output";
+		const isPrimary =
+			otherSplitGroup.descriptor.splitType === edgeDirForOther &&
+			graphEdge.itemAmount.item ===
+				otherSplitGroup.descriptor.splitItemClassName;
+
+		return isPrimary ? 1 : otherSplitGroup.splitNodeIds.length;
 	}
 
 	/**
@@ -2559,19 +2633,29 @@ graphNode instanceof MinerNode)
 		const combinedInId = this.combinedNodeIdCounter++;
 		const combinedEdgeIds: number[] = [];
 
+		// Determine combined node colors based on the "other side" nodes
+		const defaultCombinedColor = {
+			border: "rgba(0, 0, 0, 0)",
+			background: "rgba(50, 160, 160, 1)",
+			highlight: {
+				border: "rgba(238, 238, 238, 1)",
+				background: "rgba(80, 190, 190, 1)",
+			},
+		};
+		// Combined Out's "other side" = TO nodes; Combined In's "other side" = FROM nodes
+		const firstToKey = pairs[0].descriptor.toNodeKey;
+		const firstFromKey = pairs[0].descriptor.fromNodeKey;
+		const firstToVisId = pairEdgeData[0].toVisId;
+		const firstFromVisId = pairEdgeData[0].fromVisId;
+		const combinedOutColor = this.getOtherSideLinkColor(firstToKey, firstToVisId, nodes, defaultCombinedColor);
+		const combinedInColor = this.getOtherSideLinkColor(firstFromKey, firstFromVisId, nodes, defaultCombinedColor);
+
 		nodes.add({
 			id: combinedOutId,
 			label: outLabel,
 			x: combinedOutPos.x,
 			y: combinedOutPos.y,
-			color: {
-				border: "rgba(0, 0, 0, 0)",
-				background: "rgba(50, 160, 160, 1)",
-				highlight: {
-					border: "rgba(238, 238, 238, 1)",
-					background: "rgba(80, 190, 190, 1)",
-				},
-			},
+			color: combinedOutColor,
 			font: {
 				color: "rgba(238, 238, 238, 1)",
 			},
@@ -2582,14 +2666,7 @@ graphNode instanceof MinerNode)
 			label: inLabel,
 			x: combinedInPos.x,
 			y: combinedInPos.y,
-			color: {
-				border: "rgba(0, 0, 0, 0)",
-				background: "rgba(50, 160, 160, 1)",
-				highlight: {
-					border: "rgba(238, 238, 238, 1)",
-					background: "rgba(80, 190, 190, 1)",
-				},
-			},
+			color: combinedInColor,
 			font: {
 				color: "rgba(238, 238, 238, 1)",
 			},
@@ -2842,7 +2919,9 @@ graphNode instanceof MinerNode)
 					(p) =>
 						p.descriptor.fromNodeKey === origDesc.fromNodeKey &&
 						p.descriptor.toNodeKey === origDesc.toNodeKey &&
-						p.descriptor.itemClassName === origDesc.itemClassName,
+						p.descriptor.itemClassName === origDesc.itemClassName &&
+						p.descriptor.splitRecipeKey === origDesc.splitRecipeKey &&
+						p.descriptor.splitNodeIndex === origDesc.splitNodeIndex,
 				);
 				if (pair) {
 					matchingPairs.push(pair);
