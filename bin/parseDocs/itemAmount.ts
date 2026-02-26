@@ -8,6 +8,6 @@ export default function parseItemAmount(value: {
 {
 	return {
 		item: parseBlueprintClass(value.ItemClass),
-		amount: parseInt(value.Amount),
+		amount: parseInt(value.Amount, 10),
 	}
 }

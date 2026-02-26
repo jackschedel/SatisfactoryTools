@@ -88,7 +88,7 @@ export default function parseBuildings(buildings: {
 		}
 
 		if (typeof building.mInventorySizeX !== 'undefined' && typeof building.mInventorySizeY !== 'undefined') {
-			metadata.inventorySize = parseInt(building.mInventorySizeX) * parseInt(building.mInventorySizeY);
+			metadata.inventorySize = parseInt(building.mInventorySizeX, 10) * parseInt(building.mInventorySizeY, 10);
 		}
 
 		if (typeof building.mFlowLimit !== 'undefined') {

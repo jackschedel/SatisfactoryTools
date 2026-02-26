@@ -9,9 +9,9 @@ export default function parseColor(color: {
 {
 	const multiplier = convert ? 255 : 1;
 	return {
-		r: parseInt('' + parseFloat(color.R) * multiplier),
-		g: parseInt('' + parseFloat(color.G) * multiplier),
-		b: parseInt('' + parseFloat(color.B) * multiplier),
+		r: parseInt('' + parseFloat(color.R) * multiplier, 10),
+		g: parseInt('' + parseFloat(color.G) * multiplier, 10),
+		b: parseInt('' + parseFloat(color.B) * multiplier, 10),
 		a: parseFloat(color.A),
 	}
 }

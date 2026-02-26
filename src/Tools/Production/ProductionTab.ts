@@ -608,6 +608,32 @@ this.syncIntermediateNodes();
 this.rebuildVisualization();
 }
 
+	public rebuildWithIntermediateNodes(intermediateItems: string[]): void
+	{
+		this.intermediateItems = intermediateItems;
+		this.data.intermediateNodes = [...intermediateItems];
+		if (!this.lastResponse || !this.lastApiRequest) {
+			return;
+		}
+
+		const factory = new ProductionResultFactory;
+		this.resultNew = factory.create(this.lastApiRequest, this.lastResponse, rawData as any as IJsonSchema);
+		if (this.intermediateItems.length > 0) {
+			this.resultNewCustomGraph = factory.create(this.lastApiRequest, this.lastResponse, rawData as any as IJsonSchema);
+			this.resultNewCustomGraph.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
+		} else {
+			this.resultNewCustomGraph = this.resultNew;
+		}
+		this.resultStatus = ResultStatus.RESULT;
+	}
+
+	public recalculateWeights()
+	{
+		for (const k in this.data.request.resourceWeight) {
+			this.data.request.resourceWeight[k] = this.getResourceWeight(k);
+		}
+	}
+
 private syncIntermediateNodes(): void
 {
 this.intermediateItems = this.intermediateNodeItems.map((item) => item.className);
@@ -633,37 +659,6 @@ this.scope.saveState();
 			this.resultStatus = ResultStatus.RESULT;
 		});
 	}
-
-	public rebuildWithIntermediateNodes(intermediateItems: string[]): void
-	{
-		this.intermediateItems = intermediateItems;
-		this.data.intermediateNodes = [...intermediateItems];
-		if (!this.lastResponse || !this.lastApiRequest) {
-			return;
-		}
-
-		const factory = new ProductionResultFactory;
-		this.resultNew = factory.create(this.lastApiRequest, this.lastResponse, rawData as any as IJsonSchema);
-		if (this.intermediateItems.length > 0) {
-			this.resultNewCustomGraph = factory.create(this.lastApiRequest, this.lastResponse, rawData as any as IJsonSchema);
-			this.resultNewCustomGraph.graph.insertIntermediateNodes(this.intermediateItems, rawData as any as IJsonSchema);
-		} else {
-			this.resultNewCustomGraph = this.resultNew;
-		}
-		this.resultStatus = ResultStatus.RESULT;
-	}
-
-public recalculateWeights()
-	{
-		for (const k in this.data.request.resourceWeight) {
-			this.data.request.resourceWeight[k] = this.getResourceWeight(k);
-		}
-	}
-
-	private static generateTabId(): string
-{
-return 'tab_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9);
-}
 
 private getResourceWeight(item: string): number
 	{
@@ -691,5 +686,10 @@ private getResourceWeight(item: string): number
 				return this.data.request.resourceWeight[item];
 		}
 	}
+
+	private static generateTabId(): string
+{
+return 'tab_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9);
+}
 
 }

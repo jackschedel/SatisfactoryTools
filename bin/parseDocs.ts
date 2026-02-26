@@ -33,7 +33,7 @@ const json: IJsonSchema = {
 
 let biomass: IItemSchema[] = [];
 let extraInfo: any[] = [];
-let imageMapping: { [key: string]: string } = {};
+const imageMapping: { [key: string]: string } = {};
 
 for (const definitions of docs) {
 	switch (definitions.NativeClass) {
@@ -199,6 +199,7 @@ const vehicleMapping: {
 	{
 		key: 'Desc_Truck_C',
 		name: 'Truck',
+		// tslint:disable-next-line:max-line-length
 		description: '48 slot inventory. Has a built in Craft Bench. Can be automated to pick up and deliver resources at Truck Stations. Nicknamed the Unit by FICSIT pioneers because of its massive frame.',
 	},
 	{
@@ -258,12 +259,13 @@ for (const info of extraInfo) {
 		json.buildings[info.className].buildMenuPriority = info.priority;
 		json.buildings[info.className].categories = info.categories;
 	} else {
+		// tslint:disable-next-line:no-console
 		console.log(info.className);
 	}
 }
 
 // add coupon item
-json.items['Desc_ResourceSinkCoupon_C'] = {
+json.items.Desc_ResourceSinkCoupon_C = {
 	className: 'Desc_ResourceSinkCoupon_C',
 	description: 'A special FICSIT bonus program Coupon, obtained through the AWESOME Sink. Can be redeemed in the AWESOME Shop for bonus milestones and rewards',
 	energyValue: 0,
@@ -316,7 +318,7 @@ json.items[Constants.POWER_CLASSNAME] = {
 	slug: 'power',
 	stackSize: 1,
 };
-imageMapping['Desc_ResourceSinkCoupon_C'] = '/Game/FactoryGame/Resource/Parts/ResourceSinkCoupon/UI/IconDesc_Ficsit_Coupon_256.png';
+imageMapping.Desc_ResourceSinkCoupon_C = '/Game/FactoryGame/Resource/Parts/ResourceSinkCoupon/UI/IconDesc_Ficsit_Coupon_256.png';
 
 // add biomass stuff to biomass burner
 for (const key in json.generators) {
@@ -330,7 +332,7 @@ for (const key in json.generators) {
 
 	for (const k in json.generators[key].fuels) {
 		if (json.generators[key].fuels[k].item === 'FGItemDescriptorBiomass') {
-			json.generators[key].fuels.splice(parseInt(k), 1);
+			json.generators[key].fuels.splice(parseInt(k, 10), 1);
 			json.generators[key].fuels.push(...biomass.map((bio) => {
 				return {
 					item: bio.className,

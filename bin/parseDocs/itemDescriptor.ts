@@ -53,7 +53,7 @@ export default function parseItemDescriptors(items: {
 				slug: Strings.webalize(item.mDisplayName),
 				className: item.ClassName,
 				name: item.mDisplayName,
-				sinkPoints: parseInt(item.mResourceSinkPoints),
+				sinkPoints: parseInt(item.mResourceSinkPoints, 10),
 				description: item.mDescription.replace(/\r\n/ig, '\n'),
 				stackSize: Strings.stackSizeFromEnum(item.mStackSize),
 				energyValue: parseFloat(item.mEnergyValue),

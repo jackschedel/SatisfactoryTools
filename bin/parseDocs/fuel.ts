@@ -14,7 +14,7 @@ export function parseFuels(fuels: {
 			item: fuel.mFuelClass,
 			supplementalItem: fuel.mSupplementalResourceClass || null,
 			byproduct: fuel.mByproduct || null,
-			byproductAmount: fuel.mByproductAmount ? parseInt(fuel.mByproductAmount) : null,
+			byproductAmount: fuel.mByproductAmount ? parseInt(fuel.mByproductAmount, 10) : null,
 		});
 	}
 

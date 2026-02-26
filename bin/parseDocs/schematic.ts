@@ -60,7 +60,7 @@ export default function parseSchematics(schematics: {
 
 		for (const unlock of schematic.mUnlocks) {
 			if (unlock.mNumInventorySlotsToUnlock) {
-				unlockData.inventorySlots += parseInt(unlock.mNumInventorySlotsToUnlock);
+				unlockData.inventorySlots += parseInt(unlock.mNumInventorySlotsToUnlock, 10);
 			}
 			if (unlock.mRecipes) {
 				unlockData.recipes.push(...Arrays.ensureArray(Strings.unserializeDocs(unlock.mRecipes)).map(parseBlueprintClass));
@@ -94,7 +94,7 @@ export default function parseSchematics(schematics: {
 			className: schematic.ClassName,
 			name: schematic.mDisplayName,
 			slug: slug,
-			tier: parseInt(schematic.mTechTier),
+			tier: parseInt(schematic.mTechTier, 10),
 			cost: cost,
 			unlock: unlockData,
 			requiredSchematics: requiredSchematics,
